@@ -1,0 +1,87 @@
+# ========================================
+# Python / Django (backend)
+# ========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment (189 MB!)
+venv/
+env/
+ENV/
+.venv/
+
+# Django
+*.log
+db.sqlite3
+db.sqlite3-journal
+local_settings.py
+
+# Migrations sqlite (если есть)
+*.sqlite3
+
+# Загруженные пользователями файлы — приватные данные, не в git
+backend/media/
+
+# Коллекция статики собранная для прода
+backend/staticfiles/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ========================================
+# Node.js / React (frontend)
+# ========================================
+node_modules/
+
+# Production build (генерируется командой npm run build)
+build/
+dist/
+
+# npm/yarn служебное
+.npm
+.yarn-integrity
+package-lock.json.bak
+yarn-error.log
+npm-debug.log*
+
+# ========================================
+# Секреты — НИКОГДА не коммитить
+# ========================================
+.env
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+
+# Sentry tokens, AWS keys etc.
+.sentryclirc
+
+# ========================================
+# IDE / редакторы
+# ========================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Claude Code локальные настройки
+.claude/
+
+# Рабочая память (внутренние заметки, не для публичного репо)
+collecta-memory.md
+
+# ========================================
+# OS
+# ========================================
+desktop.ini
+$RECYCLE.BIN/

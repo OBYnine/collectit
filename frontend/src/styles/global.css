@@ -1,0 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Outfit', sans-serif; background: #0a0e17; color: #e8eaf0; }
+}
+
+.app-bg {
+  min-height: 100vh;
+  background: #0a0e17;
+}
+
+.tab-active { position: relative; color: #e8a635 !important; }
+.tab-active::after {
+  content: ''; position: absolute; bottom: -1px; left: 20%; width: 60%; height: 2px;
+  background: #e8a635; border-radius: 2px;
+}
+
+.subtab-active { position: relative; color: #e8a635 !important; }
+.subtab-active::after {
+  content: ''; position: absolute; bottom: -1px; left: 0; width: 100%; height: 2px;
+  background: #e8a635;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.anim-in { animation: fadeUp 0.4s ease both; }
+.anim-d1 { animation-delay: 0.05s; }
+.anim-d2 { animation-delay: 0.10s; }
+.anim-d3 { animation-delay: 0.15s; }
+.anim-d4 { animation-delay: 0.20s; }
+.anim-d5 { animation-delay: 0.25s; }
+.anim-d6 { animation-delay: 0.30s; }
