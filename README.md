@@ -103,6 +103,29 @@ npm start
 
 ---
 
+## Быстрый старт через Docker
+
+Поднимает PostgreSQL, Redis, backend, Celery и frontend/nginx:
+
+```powershell
+copy .env.docker.example .env.docker
+docker compose --env-file .env.docker up --build
+```
+
+Приложение: http://localhost:3000/
+
+Админка: http://localhost:3000/admin/
+
+Создать администратора:
+
+```powershell
+docker compose --env-file .env.docker exec backend python manage.py createsuperuser
+```
+
+Подробнее: [`DOCKER.md`](DOCKER.md)
+
+---
+
 ## Production-режим (с Redis)
 
 В этом режиме работают:

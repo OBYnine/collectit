@@ -54,6 +54,8 @@ npm-debug.log*
 # Секреты — НИКОГДА не коммитить
 # ========================================
 .env
+.env.docker
+!.env.docker.example
 .env.local
 .env.production
 .env.*.local
