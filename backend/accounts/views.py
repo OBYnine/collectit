@@ -4,15 +4,16 @@ from decimal import Decimal
 from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes, authentication_classes
 from rest_framework.response import Response
-from rest_framework.throttling import UserRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.mail import send_mail
 from django.conf import settings
 from django.db import transaction as db_transaction
 from django.db.models import F
 import requests as http_requests
 from .serializers import UserProfileSerializer, RegisterSerializer
-from .models import Transaction
+from .models import PendingRegistration, Transaction
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -21,6 +22,11 @@ User = get_user_model()
 class PaymentThrottle(UserRateThrottle):
     """Отдельный throttle для платёжных endpoints (10/час)."""
     scope = "payment"
+
+
+class RegisterThrottle(AnonRateThrottle):
+    """Ограничивает частую отправку писем подтверждения."""
+    scope = "register"
 
 
 def _setup_yookassa():
@@ -54,11 +60,97 @@ def _credit_user(user_id, amount, description, payment_yookassa_id=None):
     return True
 
 
+def _send_verification_email(pending_registration):
+    confirm_url = (
+        f"{settings.FRONTEND_URL.rstrip('/')}/verify-email/"
+        f"{pending_registration.token}"
+    )
+    subject = "Подтверждение почты CollectIT"
+    message = (
+        f"Здравствуйте, {pending_registration.username}!\n\n"
+        "Чтобы завершить регистрацию в CollectIT, подтвердите почту по ссылке:\n"
+        f"{confirm_url}\n\n"
+        f"Ссылка действует {settings.EMAIL_VERIFICATION_EXPIRE_HOURS} часов.\n"
+        "Если вы не регистрировались в CollectIT, просто игнорируйте это письмо."
+    )
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[pending_registration.email],
+        fail_silently=False,
+    )
+
+
 class RegisterView(generics.CreateAPIView):
-    """POST /api/accounts/register/"""
-    queryset = User.objects.all()
+    """POST /api/accounts/register/ — создаёт заявку и отправляет письмо подтверждения."""
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [RegisterThrottle]
+
+    def perform_create(self, serializer):
+        pending_registration = serializer.save()
+        _send_verification_email(pending_registration)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(
+            {
+                "detail": "Письмо с подтверждением отправлено на email.",
+                "email": serializer.validated_data["email"],
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
+def verify_email(request, token):
+    """GET /api/accounts/verify-email/<token>/ — подтверждает email и создаёт пользователя."""
+    try:
+        pending_registration = PendingRegistration.objects.get(token=token)
+    except PendingRegistration.DoesNotExist:
+        return Response(
+            {"detail": "Ссылка подтверждения недействительна."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if pending_registration.is_expired():
+        pending_registration.delete()
+        return Response(
+            {"detail": "Срок действия ссылки истёк. Зарегистрируйтесь ещё раз."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    with db_transaction.atomic():
+        if User.objects.filter(email__iexact=pending_registration.email).exists():
+            pending_registration.delete()
+            return Response(
+                {"detail": "Пользователь с таким email уже существует."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if User.objects.filter(username__iexact=pending_registration.username).exists():
+            pending_registration.delete()
+            return Response(
+                {"detail": "Пользователь с таким именем уже существует."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User.objects.create(
+            username=pending_registration.username,
+            email=pending_registration.email,
+            password=pending_registration.password_hash,
+        )
+        pending_registration.delete()
+
+    serializer = UserProfileSerializer(user, context={"request": request})
+    return Response(
+        {"detail": "Email подтверждён. Аккаунт создан.", "user": serializer.data},
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(["GET", "PATCH"])

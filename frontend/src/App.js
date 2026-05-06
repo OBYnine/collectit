@@ -14,6 +14,7 @@ const NewsPage       = lazy(() => import('./pages/NewsPage'));
 const SearchPage     = lazy(() => import('./pages/SearchPage'));
 const LoginPage      = lazy(() => import('./pages/LoginPage'));
 const RegisterPage   = lazy(() => import('./pages/RegisterPage'));
+const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
 const SettingsPage   = lazy(() => import('./pages/SettingsPage'));
 const UserPublicPage = lazy(() => import('./pages/UserPublicPage'));
 const BalancePage    = lazy(() => import('./pages/BalancePage'));
@@ -37,6 +38,7 @@ export default function App() {
             <Routes>
             <Route path="/login"    element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
 
             <Route element={<MainLayout />}>
               <Route path="/" element={<Navigate to={isAuthenticated() ? '/profile' : '/login'} replace />} />

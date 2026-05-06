@@ -150,6 +150,18 @@ export async function register(username, email, password, passwordConfirm) {
   return res.json();
 }
 
+export async function verifyEmail(token) {
+  const res = await fetch(`${API_BASE}/accounts/verify-email/${encodeURIComponent(token)}/`, {
+    method: "GET",
+    credentials: "include",
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Не удалось подтвердить email");
+  }
+  return data;
+}
+
 // --- Profile ---
 export async function getMe() {
   const res = await apiFetch("/accounts/me/");

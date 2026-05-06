@@ -1,5 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils import timezone
+import secrets
 
 
 class User(AbstractUser):
@@ -71,3 +73,36 @@ class Transaction(models.Model):
 
     def __str__(self):
         return f"{self.get_kind_display()} {self.amount} — {self.user}"
+
+
+def generate_email_verification_token():
+    return secrets.token_urlsafe(48)
+
+
+class PendingRegistration(models.Model):
+    username = models.CharField(max_length=150)
+    email = models.EmailField()
+    password_hash = models.CharField(max_length=128)
+    token = models.CharField(
+        max_length=128,
+        unique=True,
+        default=generate_email_verification_token,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "pending_registrations"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["email"], name="pending_reg_email_idx"),
+            models.Index(fields=["username"], name="pending_reg_username_idx"),
+            models.Index(fields=["token"], name="pending_reg_token_idx"),
+            models.Index(fields=["expires_at"], name="pending_reg_expires_idx"),
+        ]
+
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+    def __str__(self):
+        return f"{self.email} ({self.username})"

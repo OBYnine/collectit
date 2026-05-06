@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { register, login } from '../api/client';
+import { Link } from 'react-router-dom';
+import { register } from '../api/client';
 
 export default function RegisterPage() {
   const [form, setForm] = useState({ username: '', email: '', password: '', password_confirm: '' });
   const [error, setError] = useState('');
+  const [submittedEmail, setSubmittedEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
   function set(field) {
     return e => setForm(f => ({ ...f, [field]: e.target.value }));
@@ -21,9 +21,8 @@ export default function RegisterPage() {
     }
     setLoading(true);
     try {
-      await register(form.username, form.email, form.password, form.password_confirm);
-      await login(form.email, form.password);
-      navigate('/profile');
+      const data = await register(form.username, form.email, form.password, form.password_confirm);
+      setSubmittedEmail(data.email || form.email);
     } catch (err) {
       try {
         const parsed = JSON.parse(err.message);
@@ -54,6 +53,23 @@ export default function RegisterPage() {
           <div className="text-sm text-[#4a5568]">Создайте аккаунт</div>
         </div>
 
+        {submittedEmail ? (
+          <div className="bg-[#151c2c] border border-white/[.06] rounded-2xl p-7 flex flex-col gap-4">
+            <div className="text-sm text-[#e8eaf0] leading-relaxed">
+              Мы отправили письмо для подтверждения на{' '}
+              <span className="text-[#e8a635] font-semibold">{submittedEmail}</span>.
+            </div>
+            <div className="text-sm text-[#8892a4] leading-relaxed">
+              Перейдите по ссылке из письма, чтобы завершить создание аккаунта.
+            </div>
+            <Link
+              to="/login"
+              className="w-full text-center bg-[#e8a635] text-[#0a0e17] font-bold py-3 rounded-xl text-sm transition-all hover:bg-[#f0b84a]"
+            >
+              Перейти ко входу
+            </Link>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="bg-[#151c2c] border border-white/[.06] rounded-2xl p-7 flex flex-col gap-4">
           {error && (
             <div className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-4 py-2.5">
@@ -88,6 +104,7 @@ export default function RegisterPage() {
             <Link to="/login" className="text-[#e8a635] hover:underline">Войти</Link>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

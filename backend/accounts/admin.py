@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import User
+from .models import PendingRegistration, User
 
 
 @admin.register(User)
@@ -18,3 +18,10 @@ class UserAdmin(BaseUserAdmin):
         ("Статистика", {"fields": ("total_items", "total_collections", "total_trades", "rating", "profile_views")}),
         ("Доставка", {"fields": ("delivery_city", "delivery_point_code", "delivery_point_address")}),
     )
+
+
+@admin.register(PendingRegistration)
+class PendingRegistrationAdmin(admin.ModelAdmin):
+    list_display = ["email", "username", "created_at", "expires_at"]
+    search_fields = ["email", "username"]
+    readonly_fields = ["username", "email", "password_hash", "token", "created_at", "expires_at"]
