@@ -19,6 +19,7 @@ const SettingsPage   = lazy(() => import('./pages/SettingsPage'));
 const UserPublicPage = lazy(() => import('./pages/UserPublicPage'));
 const BalancePage    = lazy(() => import('./pages/BalancePage'));
 const SupportPage    = lazy(() => import('./pages/SupportPage'));
+const AdminTicketsPage = lazy(() => import('./pages/AdminTicketsPage'));
 
 function MainLayout() {
   return (
@@ -60,6 +61,10 @@ export default function App() {
               <Route
                 path="/support"
                 element={isAuthenticated() ? <SupportPage /> : <Navigate to="/login" replace />}
+              />
+              <Route
+                path="/admin/tickets"
+                element={isAuthenticated() ? <AdminTicketsPage /> : <Navigate to="/login" replace />}
               />
             </Route>
           </Routes>

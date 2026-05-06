@@ -1,15 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { logout, getNotifications, getUnreadCount, markAllRead, isAuthenticated, getChatUnreadCount, getChats, getOrCreateChat, getMessages, sendMessage, agreeChatSale, payChatFromBalance, shipChat, confirmReceipt, rateChat, acknowledgeRating } from '../api/client';
 import { useUser } from '../context/UserContext';
 import { API_BASE } from '../utils/config';
 import { useChatSocket } from '../hooks/useChatSocket';
+import { useUserEventsSocket } from '../hooks/useUserEventsSocket';
 
 const tabs = [
   { path: '/profile', label: 'Профиль' },
   { path: '/news',    label: 'Новости' },
   { path: '/search',  label: 'Поиск' },
+  { path: '/admin/tickets', label: 'Обращения', adminOnly: true },
 ];
 
 const MIN_W = 260, MIN_H = 200;
@@ -593,6 +595,59 @@ export default function TopNav() {
   const menuRef = useRef(null);
   const bellRef = useRef(null);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const authed = isAuthenticated();
+
+  const handleUserEvent = useCallback((event) => {
+    if (event?.type === 'notification.created' && event.notification) {
+      setUnreadCount(count => count + 1);
+      setNewIds(prev => new Set(prev).add(event.notification.id));
+      setNotifs(prev => [event.notification, ...prev.filter(n => n.id !== event.notification.id)].slice(0, 50));
+      queryClient.setQueryData(['notif-unread'], (count = 0) => Number(count || 0) + 1);
+      return;
+    }
+
+    if (event?.type === 'support.ticket.updated' && event.ticket) {
+      const sortUserTickets = (items) => {
+        const order = { open: 0, answered: 1, closed: 2 };
+        return [...items].sort((a, b) => {
+          const statusDiff = (order[a.status] ?? 3) - (order[b.status] ?? 3);
+          if (statusDiff !== 0) return statusDiff;
+          return new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at);
+        });
+      };
+      const sortAdminTickets = (items) => {
+        const order = { open: 0, answered: 1 };
+        return [...items].sort((a, b) => {
+          const statusDiff = (order[a.status] ?? 2) - (order[b.status] ?? 2);
+          if (statusDiff !== 0) return statusDiff;
+          return new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at);
+        });
+      };
+      const upsertTicket = (prev = []) => {
+        if (!Array.isArray(prev)) return prev;
+        const exists = prev.some(ticket => ticket.id === event.ticket.id);
+        return exists
+          ? prev.map(ticket => ticket.id === event.ticket.id ? event.ticket : ticket)
+          : [event.ticket, ...prev];
+      };
+      queryClient.setQueryData(['support-tickets'], (prev = []) => {
+        if (prev === undefined) return prev;
+        return sortUserTickets(upsertTicket(prev));
+      });
+      queryClient.setQueryData(['admin-support-tickets'], (prev = []) => {
+        if (prev === undefined) return prev;
+        if (event.ticket.status === 'closed') {
+          return prev.filter(ticket => ticket.id !== event.ticket.id);
+        }
+        return sortAdminTickets(upsertTicket(prev));
+      });
+      queryClient.invalidateQueries({ queryKey: ['support-tickets'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-support-tickets'] });
+    }
+  }, [queryClient]);
+
+  useUserEventsSocket(authed, handleUserEvent);
 
   // Открытие чата через кастомное событие (из ItemModal / WishlistItemModal)
   useEffect(() => {
@@ -607,7 +662,6 @@ export default function TopNav() {
 
   // Счётчики уведомлений и непрочитанных сообщений — через React Query.
   // refetchInterval = 60с (как было), плюс кэшируется между маунтами TopNav.
-  const authed = isAuthenticated();
   const notifQ = useQuery({
     queryKey: ['notif-unread'],
     queryFn:  () => getUnreadCount().then(d => d?.count || 0),
@@ -625,11 +679,20 @@ export default function TopNav() {
   useEffect(() => { if (notifQ.data !== undefined) setUnreadCount(notifQ.data); }, [notifQ.data]);
   useEffect(() => { if (chatQ.data  !== undefined) setChatUnreadCount(chatQ.data);  }, [chatQ.data]);
 
+  const closeNotifications = useCallback(() => {
+    setBellOpen(false);
+    if (!bellOpen) return;
+
+    setUnreadCount(0);
+    queryClient.setQueryData(['notif-unread'], 0);
+    markAllRead().then(() => setNewIds(new Set())).catch(() => {});
+  }, [bellOpen, queryClient]);
+
   // Закрытие меню по клику вне
   const handleOutsideClick = useCallback((e) => {
     if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
-    if (bellRef.current && !bellRef.current.contains(e.target)) setBellOpen(false);
-  }, []);
+    if (bellRef.current && !bellRef.current.contains(e.target)) closeNotifications();
+  }, [closeNotifications]);
 
   useEffect(() => {
     if (menuOpen || bellOpen) document.addEventListener('mousedown', handleOutsideClick);
@@ -644,25 +707,29 @@ export default function TopNav() {
 
   function handleBellOpen() {
     const opening = !bellOpen;
-    setBellOpen(v => !v);
+    if (!opening) {
+      closeNotifications();
+      return;
+    }
+
+    setBellOpen(true);
     setMenuOpen(false);
 
     if (opening) {
-      setUnreadCount(0);
       setNotifsLoading(true);
       getNotifications().then(data => {
         const list = data.results || [];
         setNotifs(list);
         // Фиксируем непрочитанные один раз — Set хранится в TopNav до перезагрузки страницы
         const unread = new Set(list.filter(n => !n.is_read).map(n => n.id));
-        if (unread.size > 0) setNewIds(unread);
-        markAllRead().catch(() => {});
+        setNewIds(unread);
       }).finally(() => setNotifsLoading(false));
     }
   }
 
   const initials = user?.username?.[0]?.toUpperCase() || 'U';
   const avatarSrc = user?.avatar ? `${API_BASE}${user.avatar}` : null;
+  const visibleTabs = tabs.filter(t => !t.adminOnly || user?.is_staff);
 
   return (
     <>
@@ -672,7 +739,7 @@ export default function TopNav() {
       </NavLink>
 
       <div className="flex gap-1">
-        {tabs.map((t) => (
+        {visibleTabs.map((t) => (
           <NavLink
             key={t.path}
             to={t.path}
@@ -741,7 +808,7 @@ export default function TopNav() {
                 notifs={notifs}
                 newIds={newIds}
                 loading={notifsLoading}
-                onClose={() => setBellOpen(false)}
+                onClose={closeNotifications}
               />
             )}
           </div>
@@ -750,7 +817,7 @@ export default function TopNav() {
         {/* Аватар + дропдаун */}
         <div className="relative" ref={menuRef}>
           <button
-            onClick={() => { setMenuOpen(v => !v); setBellOpen(false); }}
+            onClick={() => { setMenuOpen(v => !v); closeNotifications(); }}
             className="flex items-center gap-1.5 cursor-pointer select-none bg-transparent border-none p-0"
           >
             <div className="w-[34px] h-[34px] rounded-full overflow-hidden bg-[#e8a635] flex items-center justify-center font-bold text-sm text-[#0a0e17] flex-shrink-0">

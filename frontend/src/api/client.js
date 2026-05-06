@@ -329,6 +329,37 @@ export async function createTicket(topic, message) {
   return res.json();
 }
 
+export async function sendTicketMessage(id, message) {
+  const res = await apiFetch(`/support/tickets/${id}/messages/`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function confirmTicketResolved(id) {
+  const res = await apiFetch(`/support/tickets/${id}/resolve/`, { method: 'POST' });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getAdminTickets(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  const res = await apiFetch(`/support/admin/tickets/${query ? `?${query}` : ''}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function updateAdminTicket(id, data) {
+  const res = await apiFetch(`/support/admin/tickets/${id}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 // --- Search ---
 export async function searchItems(params = {}) {
   const query = new URLSearchParams(params).toString();

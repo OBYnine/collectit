@@ -36,6 +36,7 @@ class SupportTicket(models.Model):
     message     = models.TextField()
     status      = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
     admin_reply = models.TextField(blank=True)
+    resolved_confirmed_at = models.DateTimeField(null=True, blank=True)
 
     def get_topic_display_ru(self):
         return dict(self.TOPIC_CHOICES).get(self.topic, self.topic)
@@ -47,4 +48,23 @@ class SupportTicket(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"#{self.pk} {self.subject} ({self.user})"
+        return f"#{self.pk} {self.get_topic_display_ru()} ({self.user})"
+
+
+class SupportMessage(models.Model):
+    ticket = models.ForeignKey(SupportTicket, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='support_messages')
+    is_admin = models.BooleanField(default=False)
+    text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'support_messages'
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['ticket', 'created_at'], name='support_msg_ticket_idx'),
+        ]
+
+    def __str__(self):
+        role = 'admin' if self.is_admin else 'user'
+        return f"#{self.pk} ticket={self.ticket_id} {role}"
