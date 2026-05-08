@@ -5,6 +5,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes, authentication_classes
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
+from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.mail import send_mail
@@ -27,6 +28,15 @@ class PaymentThrottle(UserRateThrottle):
 class RegisterThrottle(AnonRateThrottle):
     """Ограничивает частую отправку писем подтверждения."""
     scope = "register"
+
+
+class LoginThrottle(AnonRateThrottle):
+    """Ограничивает подбор паролей на login endpoints."""
+    scope = "login"
+
+
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    throttle_classes = [LoginThrottle]
 
 
 def _setup_yookassa():
@@ -490,6 +500,12 @@ def transaction_list(request):
 @throttle_classes([PaymentThrottle])
 def deposit(request):
     """POST /api/accounts/deposit/ — пополнить баланс (демо/тест)."""
+    if not (settings.ENABLE_DEMO_DEPOSIT or request.user.is_staff):
+        return Response(
+            {"detail": "Демо-пополнение отключено."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     try:
         amount = round(float(request.data.get("amount", 0)), 2)
     except (TypeError, ValueError):
@@ -525,10 +541,13 @@ _YOOKASSA_ALLOWED_NETWORKS = [
 
 
 def _client_ip(request):
-    """Берём реальный IP клиента (за прокси — из X-Forwarded-For)."""
+    """Берём IP клиента из доверенного nginx-заголовка или REMOTE_ADDR."""
+    real_ip = request.META.get("HTTP_X_REAL_IP", "").strip()
+    if real_ip:
+        return real_ip
     xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
     if xff:
-        return xff.split(",")[0].strip()
+        return xff.split(",")[-1].strip()
     return request.META.get("REMOTE_ADDR", "")
 
 
@@ -584,6 +603,7 @@ def _set_jwt_cookies(response, access, refresh):
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([permissions.AllowAny])
+@throttle_classes([LoginThrottle])
 def cookie_login(request):
     """POST /api/accounts/cookie-login/ — выдаёт JWT в httpOnly cookie.
 

@@ -71,13 +71,20 @@ class ItemViewSet(viewsets.ModelViewSet):
                 return qs.filter(owner_id=user_id, collection__is_public=True)
             except (ValueError, TypeError):
                 return qs.none()
-        return qs
+
+        visible_to_public = Q(collection__is_public=True) | Q(is_for_sale=True)
+        if self.request.user.is_authenticated:
+            return qs.filter(Q(owner=self.request.user) | visible_to_public)
+        return qs.filter(visible_to_public)
 
 
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 def toggle_wishlist(request, item_id):
-    item = get_object_or_404(Item, id=item_id)
+    visible_items = Item.objects.filter(
+        Q(collection__is_public=True) | Q(is_for_sale=True) | Q(owner=request.user)
+    )
+    item = get_object_or_404(visible_items, id=item_id)
     witem, created = WishlistItem.objects.get_or_create(user=request.user, item=item)
     if not created:
         witem.delete()

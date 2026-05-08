@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django.db.models import Q
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -24,11 +26,17 @@ def search_items(request):
 
     min_price = request.query_params.get("min_price")
     if min_price:
-        qs = qs.filter(price__gte=min_price)
+        try:
+            qs = qs.filter(price__gte=Decimal(str(min_price)))
+        except InvalidOperation:
+            return Response({"detail": "Некорректная минимальная цена."}, status=400)
 
     max_price = request.query_params.get("max_price")
     if max_price:
-        qs = qs.filter(price__lte=max_price)
+        try:
+            qs = qs.filter(price__lte=Decimal(str(max_price)))
+        except InvalidOperation:
+            return Response({"detail": "Некорректная максимальная цена."}, status=400)
 
     ordering = request.query_params.get("ordering", "-created_at")
     allowed = ["price", "-price", "created_at", "-created_at"]
@@ -36,7 +44,10 @@ def search_items(request):
         qs = qs.order_by(ordering)
 
     page_size = 20
-    page = int(request.query_params.get("page", 1))
+    try:
+        page = max(1, int(request.query_params.get("page", 1)))
+    except (TypeError, ValueError):
+        return Response({"detail": "Некорректный номер страницы."}, status=400)
     start = (page - 1) * page_size
     total = qs.count()
     items = qs[start:start + page_size]

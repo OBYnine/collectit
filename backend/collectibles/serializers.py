@@ -14,6 +14,13 @@ class ItemSerializer(serializers.ModelSerializer):
             return obj.wishlisted_by.filter(user=request.user).exists()
         return False
 
+    def validate_collection(self, value):
+        request = self.context.get("request")
+        if value and request and request.user.is_authenticated:
+            if value.owner_id != request.user.id:
+                raise serializers.ValidationError("Нельзя добавить предмет в чужую коллекцию.")
+        return value
+
     class Meta:
         model = Item
         fields = [

@@ -46,6 +46,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
+    "collectit.security.ApiOriginProtectionMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -223,6 +224,7 @@ CDEK_CLIENT_SECRET = os.getenv("CDEK_CLIENT_SECRET", "")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:3000")
+ENABLE_DEMO_DEPOSIT = os.getenv("ENABLE_DEMO_DEPOSIT", "False").lower() in ("true", "1")
 
 # --- Email verification ---
 EMAIL_VERIFICATION_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFICATION_EXPIRE_HOURS", "24"))

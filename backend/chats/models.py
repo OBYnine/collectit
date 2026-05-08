@@ -70,7 +70,7 @@ class Chat(models.Model):
     @classmethod
     def _make_key(cls, user_a, user_b, subject):
         lo, hi = sorted([user_a.id, user_b.id])
-        subject_hash = hashlib.md5(subject.encode()).hexdigest()[:16]
+        subject_hash = hashlib.md5(subject.encode(), usedforsecurity=False).hexdigest()[:16]
         return f"{lo}_{hi}_{subject_hash}"
 
     @classmethod

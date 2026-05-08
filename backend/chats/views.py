@@ -210,7 +210,21 @@ def chat_list(request):
     item_id = request.data.get("item_id")
     if item_id:
         from collectibles.models import Item
-        item = Item.objects.filter(pk=item_id).first()
+        item = Item.objects.select_related("owner").filter(pk=item_id).first()
+        if not item:
+            return Response({"detail": "Item not found"}, status=status.HTTP_404_NOT_FOUND)
+        if item.owner_id != other.id:
+            return Response(
+                {"detail": "Предмет не принадлежит продавцу."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not item.is_for_sale:
+            return Response(
+                {"detail": "Предмет не выставлен на продажу."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        seller = item.owner
+        price = item.price
 
     chat, created = Chat.get_or_create_between(
         request.user, other,

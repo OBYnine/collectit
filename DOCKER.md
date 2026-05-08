@@ -35,6 +35,10 @@ PostgreSQL: localhost:5433
 Redis: localhost:6380
 ```
 
+По умолчанию `postgres`, `redis` и прямой `backend:8000` привязаны только к
+`127.0.0.1`, чтобы не открыть служебные порты наружу при запуске на сервере.
+Наружу должен смотреть только frontend/nginx (`FRONTEND_HOST=0.0.0.0`).
+
 Админка через frontend/nginx:
 
 ```text
@@ -74,3 +78,4 @@ docker compose --env-file .env.docker exec backend python manage.py shell
 - `backend` при старте ждёт Postgres, применяет миграции и собирает static files.
 - `media` и `staticfiles` лежат в Docker volumes и отдаются nginx.
 - Для production поменяйте `DJANGO_SECRET_KEY`, выключите `DJANGO_DEBUG`, настройте HTTPS, поставьте `JWT_COOKIE_SECURE=True` и включите `DJANGO_SECURE_SSL_REDIRECT=True`.
+- Не включайте `ENABLE_DEMO_DEPOSIT=True` на production: это тестовый endpoint ручного пополнения баланса.

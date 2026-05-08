@@ -116,6 +116,10 @@ docker compose --env-file .env.docker up --build
 
 Админка: http://localhost:3000/admin/
 
+По умолчанию наружу публикуется только frontend/nginx. PostgreSQL, Redis и прямой
+backend-порт привязаны к `127.0.0.1`, чтобы не открывать служебные порты при
+запуске на сервере.
+
 Создать администратора:
 
 ```powershell
@@ -210,11 +214,27 @@ python manage.py check --deploy
 
 - JWT в httpOnly cookie (защита от XSS)
 - Throttling на login (10/мин), register (5/час), payment (10/час)
+- Origin-проверка для небезопасных API-запросов (`POST/PATCH/PUT/DELETE`)
+- CSP и security headers в nginx (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`)
 - Race condition в оплате — защита через `select_for_update + F()`
+- Проверки владения коллекциями/предметами: нельзя добавить предмет в чужую коллекцию или открыть сделку по чужому `item_id`
 - Идемпотентность ЮKassa-webhook (partial unique constraint в БД)
-- IP whitelist для ЮKassa-webhook (CIDR подсети)
-- CORS_ALLOW_CREDENTIALS, CSRF protection
+- IP whitelist для ЮKassa-webhook (CIDR подсети) + доверенный `X-Real-IP` от nginx
+- Демо-пополнение баланса отключено по умолчанию (`ENABLE_DEMO_DEPOSIT=False`)
+- CORS_ALLOW_CREDENTIALS, SameSite cookie и CSRF/Origin protection
 - Sentry-мониторинг ошибок (опционально)
+
+Для production обязательно:
+
+```env
+DJANGO_DEBUG=False
+DJANGO_ALLOWED_HOSTS=your-domain.ru,www.your-domain.ru
+CORS_ALLOWED_ORIGINS=https://your-domain.ru,https://www.your-domain.ru
+FRONTEND_URL=https://your-domain.ru
+JWT_COOKIE_SECURE=True
+DJANGO_SECURE_SSL_REDIRECT=True
+ENABLE_DEMO_DEPOSIT=False
+```
 
 ---
 

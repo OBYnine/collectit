@@ -3,12 +3,13 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenRefreshView
+from accounts.views import ThrottledTokenObtainPairView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     # JWT Auth
-    path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain"),
+    path("api/auth/token/", ThrottledTokenObtainPairView.as_view(), name="token_obtain"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     # Apps
     path("api/accounts/", include("accounts.urls")),
