@@ -61,6 +61,23 @@ class Item(models.Model):
         return self.name
 
 
+class ItemImage(models.Model):
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="images")
+    image = models.ImageField(upload_to="items/")
+    order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "item_images"
+        ordering = ["order", "id"]
+        indexes = [
+            models.Index(fields=["item", "order"], name="item_image_order_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.item_id} #{self.order}"
+
+
 class WishlistItem(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="wishlist"

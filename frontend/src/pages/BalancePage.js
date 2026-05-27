@@ -15,6 +15,29 @@ function formatDate(dateStr) {
   });
 }
 
+const PAYMENT_REASON_MESSAGES = {
+  '3d_secure_failed': 'Не пройдена 3-D Secure проверка. Попробуйте повторить оплату или используйте другую карту.',
+  call_issuer: 'Банк отклонил оплату. Обратитесь в банк или используйте другую карту.',
+  card_expired: 'Срок действия карты истек. Используйте другую карту.',
+  country_forbidden: 'Оплата картой, выпущенной в этой стране, запрещена. Используйте другое платежное средство.',
+  fraud_suspected: 'Платеж отклонен из-за подозрения в мошенничестве. Используйте другое платежное средство.',
+  general_decline: 'Платеж отклонен без детальной причины. Обратитесь в банк или попробуйте другой способ оплаты.',
+  insufficient_funds: 'На платежном средстве недостаточно средств. Пополните баланс или используйте другую карту.',
+  invalid_card_number: 'Неверно указан номер карты. Проверьте данные и попробуйте снова.',
+  invalid_csc: 'Неверно указан CVV/CVC-код. Проверьте данные и попробуйте снова.',
+  issuer_unavailable: 'Банк сейчас недоступен. Повторите оплату позже или используйте другую карту.',
+  payment_method_limit_exceeded: 'Превышен лимит платежей для карты или магазина. Используйте другой способ оплаты или повторите позже.',
+  payment_method_restricted: 'Операции этим платежным средством запрещены. Обратитесь в банк или используйте другую карту.',
+};
+
+function paymentFailureMessage(data) {
+  const apiMessage = data?.message || data?.detail || data?.cancellation_details?.message;
+  if (apiMessage) return apiMessage;
+  const reason = data?.cancellation_details?.reason;
+  if (reason && PAYMENT_REASON_MESSAGES[reason]) return PAYMENT_REASON_MESSAGES[reason];
+  return 'Платеж не прошел или был отменен. Попробуйте повторить оплату или выбрать другой способ.';
+}
+
 function DepositModal({ onClose }) {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
@@ -114,7 +137,7 @@ export default function BalancePage() {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showDeposit, setShowDeposit] = useState(false);
-  const [paymentBanner, setPaymentBanner] = useState(null); // 'success' | 'pending' | 'failed'
+  const [paymentBanner, setPaymentBanner] = useState(null);
 
   // Автоверификация после возврата с ЮKassa
   useEffect(() => {
@@ -124,14 +147,29 @@ export default function BalancePage() {
     verifyPayment(pendingId).then(data => {
       if (data?.status === 'succeeded' || data?.status === 'already_credited') {
         if (data.balance !== undefined) setUser(prev => ({ ...prev, balance: data.balance }));
-        setPaymentBanner('success');
+        setPaymentBanner({
+          type: 'success',
+          title: 'Оплата прошла успешно - баланс пополнен',
+        });
         getTransactions().then(d => setTransactions(Array.isArray(d) ? d : []));
       } else if (data?.status === 'pending' || data?.status === 'waiting_for_capture') {
-        setPaymentBanner('pending');
+        setPaymentBanner({
+          type: 'pending',
+          title: 'Платеж обрабатывается',
+          detail: 'Подождите немного, затем обновите страницу баланса.',
+        });
       } else {
-        setPaymentBanner('failed');
+        setPaymentBanner({
+          type: 'failed',
+          title: 'Платеж не прошел',
+          detail: paymentFailureMessage(data),
+        });
       }
-    }).catch(() => setPaymentBanner('failed'));
+    }).catch(() => setPaymentBanner({
+      type: 'failed',
+      title: 'Не удалось проверить платеж',
+      detail: 'Проверьте подключение и откройте страницу баланса еще раз.',
+    }));
   }, [setUser]);
 
   useEffect(() => {
@@ -152,15 +190,16 @@ export default function BalancePage() {
       {/* Баннер результата платежа */}
       {paymentBanner && (
         <div className={`flex items-center justify-between gap-3 mb-6 px-4 py-3 rounded-xl border text-sm ${
-          paymentBanner === 'success' ? 'bg-emerald-500/[.08] border-emerald-500/30 text-emerald-400' :
-          paymentBanner === 'pending' ? 'bg-[#e8a635]/[.08] border-[#e8a635]/30 text-[#e8a635]' :
+          paymentBanner.type === 'success' ? 'bg-emerald-500/[.08] border-emerald-500/30 text-emerald-400' :
+          paymentBanner.type === 'pending' ? 'bg-[#e8a635]/[.08] border-[#e8a635]/30 text-[#e8a635]' :
           'bg-[#f87171]/[.08] border-[#f87171]/30 text-[#f87171]'
         }`}>
-          <span>
-            {paymentBanner === 'success' && '✓ Оплата прошла успешно — баланс пополнен'}
-            {paymentBanner === 'pending' && '⏳ Платёж обрабатывается, подождите немного'}
-            {paymentBanner === 'failed' && '✕ Платёж не прошёл или был отменён'}
-          </span>
+          <div className="min-w-0">
+            <div>{paymentBanner.title}</div>
+            {paymentBanner.detail && (
+              <div className="mt-1 text-xs leading-snug opacity-85">{paymentBanner.detail}</div>
+            )}
+          </div>
           <button onClick={() => setPaymentBanner(null)} className="opacity-50 hover:opacity-100 transition-opacity shrink-0">✕</button>
         </div>
       )}

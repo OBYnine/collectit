@@ -1,0 +1,8 @@
+{% extends "admin/change_list.html" %}
+
+{% block content_title %}
+  {{ block.super }}
+  <div class="help" style="margin: 8px 0 0;">
+    Всего удержано сейчас: <strong>{{ total_held_amount }} ₽</strong>
+  </div>
+{% endblock %}

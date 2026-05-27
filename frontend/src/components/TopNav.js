@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { logout, getNotifications, getUnreadCount, markAllRead, isAuthenticated, getChatUnreadCount, getChats, getOrCreateChat, getMessages, sendMessage, agreeChatSale, payChatFromBalance, shipChat, confirmReceipt, rateChat, acknowledgeRating } from '../api/client';
+import { logout, getNotifications, getUnreadCount, markAllRead, isAuthenticated, getChatUnreadCount, getChats, getOrCreateChat, getMessages, sendMessage, agreeChatSale, payChatFromBalance, shipChat, confirmReceipt, rateChat, acknowledgeRating, hideChat } from '../api/client';
 import { useUser } from '../context/UserContext';
-import { API_BASE } from '../utils/config';
+import { mediaUrl } from '../utils/config';
 import { useChatSocket } from '../hooks/useChatSocket';
 import { useUserEventsSocket } from '../hooks/useUserEventsSocket';
 
@@ -18,11 +18,13 @@ const MIN_W = 260, MIN_H = 200;
 
 function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActiveChat, onMessagesRead }) {
 
+  const { user }  = useUser();
   const navigate   = useNavigate();
   const action     = useRef(null);
   const startMouse = useRef({ x: 0, y: 0 });
   const startState = useRef({});
   const messagesEndRef = useRef(null);
+  const markReadRef = useRef(null);
 
   // Чат-список
   const [chats, setChats]             = useState([]);
@@ -91,15 +93,17 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
         // is_mine считаем по sender_id — у нас нет user-id-а в ChatWindow,
         // но handleSend локально добавит msg с is_mine=true до прихода ws-event,
         // так что фильтр выше не пустит дубль.
-        return [...prev, { ...event.message, is_mine: false }];
+        return [...prev, { ...event.message, is_mine: event.message.sender_id === user?.id }];
       });
       onMessagesRead();
+      markReadRef.current?.();
     } else if (event.type === 'chat.updated' && event.chat) {
       setChatData(event.chat);
     }
-  }, [onMessagesRead]);
+  }, [onMessagesRead, user?.id]);
 
-  const { socketReady, sendMessage: wsSend } = useChatSocket(chatId, handleSocketEvent);
+  const { socketReady, sendMessage: wsSend, markRead } = useChatSocket(chatId, handleSocketEvent);
+  useEffect(() => { markReadRef.current = markRead; }, [markRead]);
 
   // Автоскролл вниз
   useEffect(() => {
@@ -170,6 +174,8 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
     };
   }, [size.w]);
 
+  const supportCode = chatData?.support_code || (chatId ? `CHAT-${chatId}` : '');
+
   return (
     <div
       className="fixed z-[100] bg-[#151c2c] border border-white/[.08] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
@@ -194,13 +200,13 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
               </button>
               {activeChat.itemImage ? (
                 <div className="w-10 h-10 shrink-0 relative overflow-hidden rounded-lg">
-                  <img src={activeChat.itemImage} alt="" className="w-full h-full object-cover" />
+                  <img src={mediaUrl(activeChat.itemImage)} alt="" className="w-full h-full object-cover" />
                   <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, transparent 40%, #151c2c 100%)' }} />
                 </div>
               ) : (
                 <div className="w-6 h-6 rounded-full bg-[#e8a635] flex items-center justify-center text-[10px] font-bold text-[#0a0e17] shrink-0 overflow-hidden">
                   {activeChat.avatar
-                    ? <img src={activeChat.avatar} alt="" className="w-full h-full object-cover" />
+                    ? <img src={mediaUrl(activeChat.avatar)} alt="" className="w-full h-full object-cover" />
                     : activeChat.username?.[0]?.toUpperCase()
                   }
                 </div>
@@ -235,6 +241,19 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
       {/* Контент */}
       {activeChat ? (
         <>
+          {supportCode && (
+            <div className="px-3 py-2 border-b border-white/[.06] bg-white/[.025] shrink-0">
+              <button
+                type="button"
+                onClick={() => navigator.clipboard?.writeText(supportCode)}
+                title="Скопировать код для поддержки"
+                className="w-full flex items-center justify-between gap-3 text-left"
+              >
+                <span className="text-[10px] uppercase tracking-widest text-[#4a5568]">Код для поддержки</span>
+                <span className="font-['JetBrains_Mono'] text-[11px] text-[#e8a635]">{supportCode}</span>
+              </button>
+            </div>
+          )}
           {/* Область сообщений */}
           <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-1.5">
             {!chatId ? (
@@ -369,11 +388,8 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
                           try {
                             const u = await rateChat(chatId, star);
                             if (u?.id) {
+                              setChatData(u);
                               setChats(prev => prev.filter(c => c.id !== chatId));
-                              setActiveChat(null);
-                              setChatId(null);
-                              setChatData(null);
-                              setMessages([]);
                             }
                           } catch {}
                           setAgreeing(false);
@@ -410,11 +426,8 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
                         try {
                           const u = await acknowledgeRating(chatId);
                           if (u?.id) {
+                            setChatData(u);
                             setChats(prev => prev.filter(c => c.id !== chatId));
-                            setActiveChat(null);
-                            setChatId(null);
-                            setChatData(null);
-                            setMessages([]);
                           }
                         } catch {}
                         setAgreeing(false);
@@ -474,16 +487,17 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
             chats.map(chat => {
               const other = chat.other_participant;
               if (!other) return null;
-              const avatarSrc = other.avatar || null;
+              const avatarSrc = mediaUrl(other.avatar);
+              const itemImageSrc = mediaUrl(chat.item_image);
               return (
                 <button
                   key={chat.id}
-                  onClick={() => setActiveChat({ username: other.username, avatar: avatarSrc, itemName: chat.subject || null, itemImage: chat.item_image || null })}
+                  onClick={() => setActiveChat({ username: other.username, avatar: avatarSrc, itemName: chat.subject || null, itemImage: itemImageSrc })}
                   className="w-full flex items-center gap-3 px-4 py-3 border-b border-white/[.04] last:border-0 hover:bg-white/[.03] transition-colors text-left"
                 >
-                  {chat.item_image ? (
+                  {itemImageSrc ? (
                     <div className="w-9 h-9 shrink-0 relative overflow-hidden rounded-lg">
-                      <img src={chat.item_image} alt="" className="w-full h-full object-cover" />
+                      <img src={itemImageSrc} alt="" className="w-full h-full object-cover" />
                       <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, transparent 40%, #151c2c 100%)' }} />
                     </div>
                   ) : (
@@ -604,6 +618,27 @@ export default function TopNav() {
       setNewIds(prev => new Set(prev).add(event.notification.id));
       setNotifs(prev => [event.notification, ...prev.filter(n => n.id !== event.notification.id)].slice(0, 50));
       queryClient.setQueryData(['notif-unread'], (count = 0) => Number(count || 0) + 1);
+      if (event.kind === 'chat.message') {
+        const count = Number(event.chat_unread_count ?? 0);
+        setChatUnreadCount(count);
+        queryClient.setQueryData(['chat-unread'], count);
+        queryClient.invalidateQueries({ queryKey: ['chat-unread'] });
+      }
+      return;
+    }
+
+    if (event?.type === 'chat.unread_count') {
+      const count = Number(event.count || 0);
+      setChatUnreadCount(count);
+      queryClient.setQueryData(['chat-unread'], count);
+      return;
+    }
+
+    if (event?.type === 'chat.message.created') {
+      const count = Number(event.unread_count ?? 0);
+      setChatUnreadCount(count);
+      queryClient.setQueryData(['chat-unread'], count);
+      queryClient.invalidateQueries({ queryKey: ['chat-unread'] });
       return;
     }
 
@@ -647,7 +682,18 @@ export default function TopNav() {
     }
   }, [queryClient]);
 
-  useUserEventsSocket(authed, handleUserEvent);
+  const { socketReady: userEventsReady } = useUserEventsSocket(authed, handleUserEvent);
+
+  useEffect(() => {
+    if (!authed || !userEventsReady) return;
+    getChatUnreadCount()
+      .then(d => {
+        const count = Number(d?.count || 0);
+        setChatUnreadCount(count);
+        queryClient.setQueryData(['chat-unread'], count);
+      })
+      .catch(() => {});
+  }, [authed, userEventsReady, queryClient]);
 
   // Открытие чата через кастомное событие (из ItemModal / WishlistItemModal)
   useEffect(() => {
@@ -728,7 +774,7 @@ export default function TopNav() {
   }
 
   const initials = user?.username?.[0]?.toUpperCase() || 'U';
-  const avatarSrc = user?.avatar ? `${API_BASE}${user.avatar}` : null;
+  const avatarSrc = mediaUrl(user?.avatar);
   const visibleTabs = tabs.filter(t => !t.adminOnly || user?.is_staff);
 
   return (

@@ -25,6 +25,20 @@ export const WS_BASE = getWsBase();
 // не трогает уже абсолютные ссылки (http/https/data).
 export function mediaUrl(path) {
   if (!path) return null;
-  if (/^(https?:|data:)/.test(path)) return path;
-  return `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`;
+  if (/^(data:|blob:)/.test(path)) return path;
+  if (/^https?:\/\//.test(path)) {
+    if (typeof window === 'undefined') return path;
+    try {
+      const url = new URL(path);
+      if (url.pathname.startsWith('/media/') && url.hostname === window.location.hostname) {
+        return `${window.location.origin}${url.pathname}${url.search}${url.hash}`;
+      }
+    } catch {
+      return path;
+    }
+    return path;
+  }
+
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${API_BASE}${normalizedPath}`;
 }

@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { searchItems, toggleWishlist, getWishlist, isAuthenticated } from '../api/client';
-import { API_BASE } from '../utils/config';
+import { mediaUrl } from '../utils/config';
+import { itemCoverUrl } from '../utils/itemImages';
 import { formatPrice } from '../utils/format';
 import { useDebounce } from '../hooks/useDebounce';
 import { GridSkeleton } from '../components/Skeleton';
+import ItemGallery from '../components/ItemGallery';
 
 function HeartButton({ liked, onClick }) {
   return (
@@ -30,12 +32,7 @@ function ItemModal({ item, liked, onToggleLike, onClose }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const imageSrc = item.image
-    ? (item.image.startsWith('http') ? item.image : `${API_BASE}${item.image}`)
-    : null;
-  const avatarSrc = item.owner_avatar
-    ? (item.owner_avatar.startsWith('http') ? item.owner_avatar : `${API_BASE}${item.owner_avatar}`)
-    : null;
+  const avatarSrc = mediaUrl(item.owner_avatar);
   const avatarInitial = item.owner_username?.[0]?.toUpperCase() || 'U';
 
   return (
@@ -46,11 +43,8 @@ function ItemModal({ item, liked, onToggleLike, onClose }) {
     >
       <div className="w-full max-w-lg bg-[#151c2c] border border-white/[.08] rounded-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
         {/* Фото */}
-        <div className="h-56 bg-[#0d1321] flex items-center justify-center overflow-hidden relative">
-          {imageSrc
-            ? <img src={imageSrc} alt={item.name} className="w-full h-full object-cover" />
-            : <span className="text-6xl opacity-20">📦</span>
-          }
+        <div className="relative">
+          <ItemGallery item={item} alt={item.name} />
           <button
             onClick={onClose}
             className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 text-white/70 hover:text-white transition-colors text-lg"
@@ -108,7 +102,7 @@ function ItemModal({ item, liked, onToggleLike, onClose }) {
               <button
                 onClick={() => {
                   onClose();
-                  window.dispatchEvent(new CustomEvent('open-chat', { detail: { username: item.owner_username, avatar: avatarSrc, itemName: item.name, itemImage: imageSrc, itemPrice: item.price, itemId: item.id, sellerIsOther: true } }));
+                  window.dispatchEvent(new CustomEvent('open-chat', { detail: { username: item.owner_username, avatar: avatarSrc, itemName: item.name, itemImage: itemCoverUrl(item), itemPrice: item.price, itemId: item.id, sellerIsOther: true } }));
                 }}
                 className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/[.04] hover:bg-white/[.07] text-sm text-[#8892a4] hover:text-[#e8eaf0] transition-colors"
               >
@@ -128,6 +122,12 @@ function ItemModal({ item, liked, onToggleLike, onClose }) {
 export default function SearchPage() {
   const [query, setQuery]               = useState('');
   const debouncedQuery                  = useDebounce(query, 350);
+  const [minPrice, setMinPrice]         = useState('');
+  const [maxPrice, setMaxPrice]         = useState('');
+  const [ordering, setOrdering]         = useState('-created_at');
+  const [hasPhoto, setHasPhoto]         = useState(false);
+  const debouncedMinPrice               = useDebounce(minPrice, 350);
+  const debouncedMaxPrice               = useDebounce(maxPrice, 350);
   const [selectedItem, setSelectedItem] = useState(null);
   const qc = useQueryClient();
 
@@ -146,8 +146,14 @@ export default function SearchPage() {
   // Поиск — отдельный query на каждый debouncedQuery. React Query кэширует
   // результаты по ключу, поэтому повторный набор того же запроса = мгновенно.
   const itemsQ = useQuery({
-    queryKey: ['search', debouncedQuery],
-    queryFn:  () => searchItems(debouncedQuery ? { q: debouncedQuery } : {}).then(d => d?.results || []),
+    queryKey: ['search', debouncedQuery, debouncedMinPrice, debouncedMaxPrice, ordering, hasPhoto],
+    queryFn:  () => searchItems({
+      ...(debouncedQuery ? { q: debouncedQuery } : {}),
+      ...(debouncedMinPrice ? { min_price: debouncedMinPrice } : {}),
+      ...(debouncedMaxPrice ? { max_price: debouncedMaxPrice } : {}),
+      ...(hasPhoto ? { has_photo: '1' } : {}),
+      ordering,
+    }).then(d => d?.results || []),
     keepPreviousData: true,
     staleTime: 60_000,
   });
@@ -187,6 +193,41 @@ export default function SearchPage() {
         />
       </div>
 
+      <div className="grid gap-3 mb-5 anim-in anim-d2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={minPrice}
+          onChange={e => setMinPrice(e.target.value)}
+          placeholder="Цена от"
+          className="bg-[#151c2c] border border-white/[.06] rounded-xl px-4 py-2.5 text-sm text-[#e8eaf0] outline-none focus:border-[#e8a635]"
+        />
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={maxPrice}
+          onChange={e => setMaxPrice(e.target.value)}
+          placeholder="Цена до"
+          className="bg-[#151c2c] border border-white/[.06] rounded-xl px-4 py-2.5 text-sm text-[#e8eaf0] outline-none focus:border-[#e8a635]"
+        />
+        <select
+          value={ordering}
+          onChange={e => setOrdering(e.target.value)}
+          className="bg-[#151c2c] border border-white/[.06] rounded-xl px-4 py-2.5 text-sm text-[#e8eaf0] outline-none focus:border-[#e8a635]"
+        >
+          <option value="-created_at">Сначала новые</option>
+          <option value="created_at">Сначала старые</option>
+          <option value="price">Цена по возрастанию</option>
+          <option value="-price">Цена по убыванию</option>
+        </select>
+        <label className="flex items-center gap-3 bg-[#151c2c] border border-white/[.06] rounded-xl px-4 py-2.5 text-sm text-[#8892a4] cursor-pointer">
+          <input type="checkbox" checked={hasPhoto} onChange={e => setHasPhoto(e.target.checked)} />
+          Только с фото
+        </label>
+      </div>
+
       {loading && items.length === 0 && (
         <div className="mt-7">
           <GridSkeleton count={8} />
@@ -201,8 +242,8 @@ export default function SearchPage() {
             className={`bg-[#151c2c] border border-white/[.06] rounded-xl overflow-hidden cursor-pointer transition-colors duration-200 hover:border-white/[.12] anim-in anim-d${(i % 6) + 1} relative`}
           >
             <div className="h-36 bg-[#0d1321] flex items-center justify-center overflow-hidden">
-              {item.image
-                ? <img src={item.image.startsWith('http') ? item.image : `${API_BASE}${item.image}`} alt={item.name} className="w-full h-full object-cover" />
+              {itemCoverUrl(item)
+                ? <img src={itemCoverUrl(item)} alt={item.name} className="w-full h-full object-cover" />
                 : <span className="text-4xl opacity-30">📦</span>
               }
             </div>

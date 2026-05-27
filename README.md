@@ -7,12 +7,12 @@
 
 ## Возможности
 
-- **Коллекции и предметы** — CRUD с фотографиями, флаг `is_public`, цены, продажа
+- **Коллекции и предметы** — CRUD с галереей фотографий, флаг `is_public`, цены, продажа
 - **Эскроу-сделки** — деньги удерживаются до подтверждения покупателем
 - **ЮKassa** — пополнение баланса (с webhook-защитой от двойного зачисления)
 - **СДЭК** — реальный API + fallback на демо-точки
 - **Чат** — WebSocket (Django Channels), HTTP-fallback
-- **Уведомления** — внутри платформы
+- **Уведомления** — внутри платформы + realtime-события для новых сообщений и счетчиков + email-дублирование
 - **Рейтинги** — отзывы продавцу после сделки
 - **Новости** — мульти-фото, lightbox, роль `is_news_editor`
 - **Поддержка** — тикет-система с темами и ответом админа
@@ -164,10 +164,12 @@ seller "Сдал в СДЭК" -> СДЭК-заказ создан -> +60с (Cele
                 |
 buyer "Я получил товар" -> деньги переводятся продавцу -> completed
                 |
-buyer ставит оценку -> seller подтверждает -> чат уходит в архив
+completed-сделка остается в архиве у покупателя и продавца; каждый может удалить архивный чат только у себя
 ```
 
 **Важно:** деньги уходят продавцу **только** после явного подтверждения получения покупателем.
+
+В Django Admin у каждой сделки есть отдельная запись `Deal` со своим UUID. В списке сделок показывается текущая сумма удержания, общий итог удержанных средств, кнопка ручного зачисления продавцу и кнопка возврата удержанных средств покупателю для спорных случаев.
 
 ---
 
@@ -182,6 +184,7 @@ buyer ставит оценку -> seller подтверждает -> чат у�
 | GET    | `/api/accounts/me/`                       | Текущий профиль                 |
 | GET    | `/api/accounts/users/{username}/`         | Публичный профиль               |
 | POST   | `/api/accounts/create-payment/`           | Создать платёж ЮKassa           |
+| POST   | `/api/accounts/verify-payment/`           | Проверить платёж ЮKassa и причину отмены |
 | POST   | `/api/accounts/yookassa-webhook/`         | Webhook от ЮKassa (IP-проверка) |
 | GET/POST | `/api/collections/collections/`         | CRUD коллекций                  |
 | GET/POST | `/api/collections/items/`               | CRUD предметов                  |
@@ -195,8 +198,73 @@ buyer ставит оценку -> seller подтверждает -> чат у�
 | POST   | `/api/chats/{id}/ship/`                   | Продавец отправил               |
 | POST   | `/api/chats/{id}/confirm-receipt/`        | Покупатель получил, деньги продавцу |
 | POST   | `/api/chats/{id}/rate/`                   | Оценка                          |
+| DELETE | `/api/chats/{id}/hide/`                   | Локально удалить чат у текущего пользователя |
 | POST   | `/api/support/tickets/`                   | Создать обращение               |
 | WS     | `ws://host/ws/chats/{id}/?token=...`      | WebSocket чата                  |
+
+В ответах Chat API есть поле `support_code` вида `CHAT-123`. Пользователь видит его в окне переписки и может отправить администратору; в Django Admin этот код ищется в `Chats` и `Deals`.
+
+`/api/search/` поддерживает фильтры `q`, `min_price`, `max_price`, `has_photo=1` и сортировку `ordering=-created_at|created_at|price|-price`.
+В ответах предметов есть `image` для совместимости и массив `images[]` для галереи; фронт показывает листание фотографий в модалках предметов.
+
+---
+
+## AI-импорт новостей
+
+CollectIT может автоматически брать свежие новости с `https://www.numizmatik.ru/news`, отправлять пачку найденных публикаций в Google Gemini и публиковать на `/news` одну большую обзорную статью. Текст генерируется своими словами, а исходные изображения скачиваются в `media/news/images/` и прикрепляются к этой статье галереей.
+В тексте новостей поддерживается безопасное выделение жирным через `**важный фрагмент**`; HTML из текста не исполняется.
+
+Настройки:
+
+```env
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.5-flash
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash
+NEWS_IMPORT_SOURCE_URL=https://www.numizmatik.ru/news
+NEWS_IMPORT_ENABLED=False
+NEWS_IMPORT_INTERVAL_MINUTES=360
+NEWS_IMPORT_LIMIT=5        # сколько исходных новостей объединить в один обзор
+NEWS_IMPORT_MAX_IMAGES=5
+NEWS_IMPORT_REQUEST_TIMEOUT=60
+```
+
+Ручной запуск:
+
+```powershell
+docker compose --env-file .env.docker exec backend python manage.py import_numizmatik_news --limit 5
+```
+
+Проверка парсинга без Gemini и без публикации:
+
+```powershell
+docker compose --env-file .env.docker exec backend python manage.py import_numizmatik_news --limit 3 --dry-run
+```
+
+Для автоматического запуска включите `NEWS_IMPORT_ENABLED=True` и поднимите `celery`, `celery-beat`.
+
+Повторный запуск с тем же набором источников не создаёт дубль. Чтобы перегенерировать уже созданный обзор, используйте `--update-existing`.
+Если основная модель Gemini вернёт ошибку, импорт автоматически повторит запрос через `GEMINI_FALLBACK_MODEL`.
+
+---
+
+## Telegram-уведомления поддержки
+
+Backend может отправлять администратору Telegram-сообщение при создании нового тикета и при новом сообщении пользователя в тикете.
+
+```env
+TELEGRAM_NOTIFICATIONS_ENABLED=True
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ADMIN_CHAT_IDS=
+TELEGRAM_REQUEST_TIMEOUT=10
+```
+
+Чтобы получить `TELEGRAM_ADMIN_CHAT_IDS`, напишите боту `/start` из админского Telegram-аккаунта и выполните:
+
+```powershell
+docker compose --env-file .env.docker exec backend python manage.py telegram_get_updates
+```
+
+Скопируйте найденный `chat_id` в `.env.docker` и перезапустите backend.
 
 ---
 
@@ -219,10 +287,12 @@ python manage.py check --deploy
 - Race condition в оплате — защита через `select_for_update + F()`
 - Проверки владения коллекциями/предметами: нельзя добавить предмет в чужую коллекцию или открыть сделку по чужому `item_id`
 - Идемпотентность ЮKassa-webhook (partial unique constraint в БД)
+- Проверка владельца `payment_id` ЮKassa по metadata `user_id`; причины отмены `cancellation_details` возвращаются на фронт и логируются в webhook
 - IP whitelist для ЮKassa-webhook (CIDR подсети) + доверенный `X-Real-IP` от nginx
 - Демо-пополнение баланса отключено по умолчанию (`ENABLE_DEMO_DEPOSIT=False`)
 - CORS_ALLOW_CREDENTIALS, SameSite cookie и CSRF/Origin protection
 - Sentry-мониторинг ошибок (опционально)
+- Media-ссылки отдаются через frontend/nginx на том же origin (`/media/...`)
 
 Для production обязательно:
 
@@ -234,6 +304,8 @@ FRONTEND_URL=https://your-domain.ru
 JWT_COOKIE_SECURE=True
 DJANGO_SECURE_SSL_REDIRECT=True
 ENABLE_DEMO_DEPOSIT=False
+EMAIL_TIMEOUT=10
+EMAIL_NOTIFICATIONS_ENABLED=True
 ```
 
 ---

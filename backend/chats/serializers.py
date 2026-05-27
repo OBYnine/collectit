@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
 from .models import Chat, Message
@@ -38,6 +39,11 @@ class ChatSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     viewer_role = serializers.SerializerMethodField()
+    deal_id = serializers.SerializerMethodField()
+    deal_public_id = serializers.SerializerMethodField()
+    support_code = serializers.SerializerMethodField()
+    held_amount = serializers.SerializerMethodField()
+    escrow_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Chat
@@ -45,6 +51,7 @@ class ChatSerializer(serializers.ModelSerializer):
             "id", "subject", "item_image", "price", "status", "seller_id",
             "track_number", "cdek_uuid", "shipped_at",
             "rating", "buyer_confirmed", "seller_confirmed",
+            "deal_id", "deal_public_id", "support_code", "held_amount", "escrow_status",
             "viewer_role", "other_participant", "last_message", "unread_count", "created_at",
         ]
 
@@ -74,3 +81,28 @@ class ChatSerializer(serializers.ModelSerializer):
         if not request or not obj.seller_id:
             return None
         return "seller" if request.user.id == obj.seller_id else "buyer"
+
+    def get_deal_id(self, obj):
+        deal = self._get_deal(obj)
+        return deal.id if deal else None
+
+    def get_deal_public_id(self, obj):
+        deal = self._get_deal(obj)
+        return str(deal.public_id) if deal else None
+
+    def get_support_code(self, obj):
+        return f"CHAT-{obj.pk}"
+
+    def get_held_amount(self, obj):
+        deal = self._get_deal(obj)
+        return str(deal.held_amount) if deal else "0.00"
+
+    def get_escrow_status(self, obj):
+        deal = self._get_deal(obj)
+        return deal.escrow_status if deal else "not_held"
+
+    def _get_deal(self, obj):
+        try:
+            return obj.deal
+        except ObjectDoesNotExist:
+            return None

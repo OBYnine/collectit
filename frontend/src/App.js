@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import TopNav from './components/TopNav';
+import AccessibilityToggle from './components/AccessibilityToggle';
 import ErrorBoundary from './components/ErrorBoundary';
 import { PageFallback } from './components/Skeleton';
 import { isAuthenticated } from './api/client';
@@ -20,6 +21,7 @@ const UserPublicPage = lazy(() => import('./pages/UserPublicPage'));
 const BalancePage    = lazy(() => import('./pages/BalancePage'));
 const SupportPage    = lazy(() => import('./pages/SupportPage'));
 const AdminTicketsPage = lazy(() => import('./pages/AdminTicketsPage'));
+const HomePage       = lazy(() => import('./pages/HomePage'));
 
 function MainLayout() {
   return (
@@ -37,12 +39,12 @@ export default function App() {
         <UserProvider>
           <Suspense fallback={<PageFallback />}>
             <Routes>
+            <Route path="/" element={<HomePage />} />
             <Route path="/login"    element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
 
             <Route element={<MainLayout />}>
-              <Route path="/" element={<Navigate to={isAuthenticated() ? '/profile' : '/login'} replace />} />
               <Route path="/news"   element={<NewsPage />} />
               <Route path="/search" element={<SearchPage />} />
               <Route
@@ -69,6 +71,7 @@ export default function App() {
             </Route>
           </Routes>
           </Suspense>
+          <AccessibilityToggle />
         </UserProvider>
       </QueryClientProvider>
     </ErrorBoundary>

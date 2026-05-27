@@ -55,7 +55,7 @@ class ItemViewSet(viewsets.ModelViewSet):
     ordering_fields = ["price", "created_at"]
 
     def get_queryset(self):
-        qs = Item.objects.select_related("owner", "collection")
+        qs = Item.objects.select_related("owner", "collection").prefetch_related("images")
         owner_param = self.request.query_params.get("owner")
         if owner_param == "me":
             if self.request.user.is_authenticated:

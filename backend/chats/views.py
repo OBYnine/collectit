@@ -2,7 +2,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth import get_user_model
 from django.db import transaction as db_transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -11,7 +11,8 @@ from rest_framework.response import Response
 
 import logging
 
-from .models import Chat, Message
+from .models import Chat, Deal, Message
+from .realtime import broadcast_chat_unread_count, chat_unread_count, notify_chat_message, notify_user
 from .serializers import ChatSerializer, MessageSerializer
 
 logger = logging.getLogger(__name__)
@@ -88,8 +89,7 @@ def _create_cdek_order(chat, buyer, seller):
 
 
 def _notify(user, title, body):
-    from notifications.models import Notification
-    Notification.objects.create(user=user, title=title, body=body)
+    notify_user(user, title, body)
 
 
 def _ws_chat_updated(chat, request=None):
@@ -126,6 +126,7 @@ def _check_and_arrive(chat):
             return locked
         locked.status = Chat.STATUS_ARRIVED
         locked.save(update_fields=["status"])
+        Deal.sync_from_chat(locked)
         chat = locked
         arrived_now = True
 
@@ -149,11 +150,19 @@ def _check_and_arrive(chat):
     return chat
 
 
+def _exclude_deleted_for_user(queryset, user):
+    return (
+        queryset
+        .exclude(seller_id=user.id, seller_deleted_at__isnull=False)
+        .exclude(~Q(seller_id=user.id), buyer_deleted_at__isnull=False)
+    )
+
+
 def _is_archived_for(chat, user):
     """Чат перешёл в архив (Сделки) для данного пользователя."""
     if chat.seller_id == user.id:
-        return chat.seller_confirmed
-    return chat.buyer_confirmed
+        return chat.status == Chat.STATUS_COMPLETED and not chat.is_deleted_for(user)
+    return chat.status == Chat.STATUS_COMPLETED and not chat.is_deleted_for(user)
 
 
 @api_view(["GET"])
@@ -161,8 +170,10 @@ def _is_archived_for(chat, user):
 def deals_list(request):
     """GET /api/chats/deals/ — завершённые сделки текущего пользователя (архив)."""
     all_chats = (
-        Chat.objects
-        .filter(participants=request.user, status=Chat.STATUS_COMPLETED)
+        _exclude_deleted_for_user(
+            Chat.objects.filter(participants=request.user, status=Chat.STATUS_COMPLETED),
+            request.user,
+        )
         .prefetch_related("participants", "messages")
         .order_by("-created_at")
     )
@@ -175,14 +186,15 @@ def deals_list(request):
 def chat_list(request):
     if request.method == "GET":
         all_chats = (
-            Chat.objects
-            .filter(participants=request.user)
+            _exclude_deleted_for_user(
+                Chat.objects.filter(participants=request.user).exclude(status=Chat.STATUS_COMPLETED),
+                request.user,
+            )
             .prefetch_related("participants", "messages")
             .order_by("-created_at")
         )
         # Исключаем чаты, которые пользователь уже отправил в архив
-        active = [c for c in all_chats if not _is_archived_for(c, request.user)]
-        return Response(ChatSerializer(active, many=True, context={"request": request}).data)
+        return Response(ChatSerializer(all_chats, many=True, context={"request": request}).data)
 
     username = request.data.get("username", "").strip()
     if not username:
@@ -240,11 +252,7 @@ def chat_list(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def unread_count(request):
-    count = Message.objects.filter(
-        chat__participants=request.user,
-        is_read=False,
-    ).exclude(sender=request.user).count()
-    return Response({"count": count})
+    return Response({"count": chat_unread_count(request.user)})
 
 
 @api_view(["GET", "POST"])
@@ -254,12 +262,16 @@ def message_list(request, chat_id):
         chat = Chat.objects.filter(participants=request.user).get(pk=chat_id)
     except Chat.DoesNotExist:
         return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    if chat.is_deleted_for(request.user):
+        return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
     # Проверяем авто-прибытие при каждом опросе
     chat = _check_and_arrive(chat)
 
     if request.method == "GET":
-        chat.messages.exclude(sender=request.user).filter(is_read=False).update(is_read=True)
+        read_count = chat.messages.exclude(sender=request.user).filter(is_read=False).update(is_read=True)
+        if read_count:
+            broadcast_chat_unread_count(request.user)
         messages = chat.messages.select_related("sender").all()
         return Response({
             "messages": MessageSerializer(messages, many=True, context={"request": request}).data,
@@ -287,8 +299,22 @@ def message_list(request, chat_id):
         })
     except Exception as exc:
         logger.warning("WS broadcast failed for chat %s: %s", chat.pk, exc)
+    notify_chat_message(msg)
 
     return Response(MessageSerializer(msg, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["DELETE", "POST"])
+@permission_classes([IsAuthenticated])
+def hide_chat(request, chat_id):
+    try:
+        chat = Chat.objects.filter(participants=request.user).get(pk=chat_id)
+    except Chat.DoesNotExist:
+        return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    chat.mark_deleted_for(request.user)
+    broadcast_chat_unread_count(request.user)
+    return Response({"ok": True})
 
 
 @api_view(["POST"])
@@ -310,6 +336,7 @@ def chat_agree(request, chat_id):
 
     chat.status = Chat.STATUS_AGREED
     chat.save(update_fields=["status", "price"])
+    Deal.sync_from_chat(chat)
 
     buyer = chat.participants.exclude(pk=request.user.pk).first()
     if buyer:
@@ -399,6 +426,15 @@ def chat_pay(request, chat_id):
         locked_chat.cdek_uuid = cdek_uuid
         locked_chat.track_number = cdek_number
         locked_chat.save(update_fields=["status", "cdek_uuid", "track_number"])
+        deal = Deal.ensure_for_chat(
+            locked_chat,
+            buyer=buyer,
+            seller=locked_chat.seller,
+            item=locked_chat.item,
+            amount=locked_chat.price,
+        )
+        if deal:
+            deal.mark_held(locked_chat.price)
         chat = locked_chat
 
     # Обновляем объект buyer, чтобы вернуть актуальный баланс
@@ -449,6 +485,7 @@ def chat_ship(request, chat_id):
         chat.item = None
 
     chat.save(update_fields=update_fields)
+    Deal.sync_from_chat(chat)
 
     # Шедулим точный таймер прибытия через Celery (60 сек). При CELERY_TASK_ALWAYS_EAGER
     # (например, в тестах без Redis) задача выполнится синхронно, поэтому подставим
@@ -554,8 +591,6 @@ def chat_confirm_receipt(request, chat_id):
     Это и есть момент «выпуска» эскроу: до сих пор сумма висела на сайте, теперь
     идёт на баланс продавца. Защита от гонки — атомарный F()-update + select_for_update.
     """
-    from accounts.models import Transaction as Tx
-
     try:
         chat = Chat.objects.select_related("seller").filter(participants=request.user).get(pk=chat_id)
     except Chat.DoesNotExist:
@@ -576,18 +611,18 @@ def chat_confirm_receipt(request, chat_id):
 
         locked.status = Chat.STATUS_COMPLETED
         locked.save(update_fields=["status"])
-
-        if locked.seller_id and locked.price:
-            User.objects.filter(pk=locked.seller_id).update(
-                balance=F("balance") + locked.price
+        deal = Deal.ensure_for_chat(
+            locked,
+            seller=locked.seller,
+            item=locked.item,
+            amount=locked.price,
+        )
+        if deal and deal.escrow_status == Deal.ESCROW_NOT_HELD and locked.price:
+            deal.mark_held(locked.price)
+        if deal:
+            credited, _message = deal.release_to_seller(
+                reason="Продажа",
             )
-            Tx.objects.create(
-                user_id=locked.seller_id,
-                kind=Tx.DEPOSIT,
-                amount=locked.price,
-                description=f"Продажа: {locked.subject or 'предмет'}",
-            )
-            credited = True
         chat = locked
 
     if credited and chat.seller_id:

@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getUserProfile, getPublicCollections, getCollection, getForSalePrivateItems, toggleWishlist, getWishlist, isAuthenticated } from '../api/client';
-
-const API_BASE = process.env.REACT_APP_API_URL?.replace('/api', '') || 'http://127.0.0.1:8000';
+import { mediaUrl } from '../utils/config';
+import { itemCoverUrl } from '../utils/itemImages';
+import ItemGallery from '../components/ItemGallery';
 
 function imgSrc(url) {
-  if (!url) return null;
-  return url.startsWith('http') ? url : `${API_BASE}${url}`;
+  return mediaUrl(url);
 }
 
 function HeartButton({ liked, onClick }) {
@@ -38,11 +38,8 @@ function ItemModal({ item, liked, onToggleLike, onClose }) {
     >
       <div className="w-full max-w-lg bg-[#151c2c] border border-white/[.08] rounded-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
         {/* Фото */}
-        <div className="h-56 bg-[#0d1321] flex items-center justify-center overflow-hidden relative">
-          {imgSrc(item.image)
-            ? <img src={imgSrc(item.image)} alt={item.name} className="w-full h-full object-cover" />
-            : <span className="text-6xl opacity-20">📦</span>
-          }
+        <div className="relative">
+          <ItemGallery item={item} alt={item.name} />
           <button
             onClick={onClose}
             className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 text-white/70 hover:text-white transition-colors text-lg"
@@ -121,8 +118,8 @@ function CollectionModal({ collection, onClose }) {
               {items.map(item => (
                 <div key={item.id} className="bg-[#0d1321] rounded-xl overflow-hidden border border-white/[.05]">
                   <div className="h-24 w-full flex items-center justify-center overflow-hidden">
-                    {imgSrc(item.image)
-                      ? <img src={imgSrc(item.image)} alt={item.name} className="w-full h-full object-cover" />
+                    {itemCoverUrl(item)
+                      ? <img src={itemCoverUrl(item)} alt={item.name} className="w-full h-full object-cover" />
                       : <span className="text-3xl opacity-20">📦</span>
                     }
                   </div>
@@ -308,8 +305,8 @@ export default function UserPublicPage() {
                   className="bg-[#151c2c] border border-white/[.06] rounded-xl overflow-hidden cursor-pointer transition-colors hover:border-white/[.14]"
                 >
                   <div className="h-32 bg-[#0d1321] flex items-center justify-center overflow-hidden">
-                    {imgSrc(item.image)
-                      ? <img src={imgSrc(item.image)} alt={item.name} className="w-full h-full object-cover" />
+                    {itemCoverUrl(item)
+                      ? <img src={itemCoverUrl(item)} alt={item.name} className="w-full h-full object-cover" />
                       : <span className="text-4xl opacity-20">📦</span>
                     }
                   </div>

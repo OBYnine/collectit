@@ -6,6 +6,7 @@ urlpatterns = [
     path("deals/", views.deals_list, name="deals_list"),
     path("unread-count/", views.unread_count, name="chat_unread_count"),
     path("<int:chat_id>/messages/", views.message_list, name="message_list"),
+    path("<int:chat_id>/hide/", views.hide_chat, name="hide_chat"),
     path("<int:chat_id>/agree/", views.chat_agree, name="chat_agree"),
     path("<int:chat_id>/pay/", views.chat_pay, name="chat_pay"),
     path("<int:chat_id>/ship/", views.chat_ship, name="chat_ship"),

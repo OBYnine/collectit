@@ -4,8 +4,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getMe, updateMe, updateMeForm, changePassword, getCdekPoints } from '../api/client';
 import { useUser } from '../context/UserContext';
-
-const API_BASE = process.env.REACT_APP_API_URL?.replace('/api', '') || 'http://127.0.0.1:8000';
+import { mediaUrl } from '../utils/config';
 
 // Цветные круглые маркеры — обходит проблему с путями к PNG в webpack
 function makeMarkerIcon(active) {
@@ -26,7 +25,10 @@ function makeMarkerIcon(active) {
 
 function RecenterMap({ center }) {
   const map = useMap();
-  useEffect(() => { map.setView(center, 12); }, [center, map]);
+  useEffect(() => {
+    map.setView(center, 12);
+    setTimeout(() => map.invalidateSize(), 0);
+  }, [center, map]);
   return null;
 }
 
@@ -46,9 +48,13 @@ function DeliverySection({ user, onSaved }) {
   // Загружаем все точки при монтировании
   useEffect(() => {
     getCdekPoints('').then(data => {
-      if (data.points) setPoints(data.points);
+      if (data.points) {
+        setPoints(data.points);
+        const current = data.points.find(p => p.code === user?.delivery_point_code) || data.points[0];
+        if (current?.lat && current?.lng) setMapCenter([current.lat, current.lng]);
+      }
     }).catch(() => {});
-  }, []);
+  }, [user?.delivery_point_code]);
 
   async function handleSearch() {
     if (!city.trim()) return;
@@ -60,6 +66,7 @@ function DeliverySection({ user, onSaved }) {
       // Обновляем все точки и зумим на город
       if (data.points) setPoints(data.points);
       if (data.city?.lat) setMapCenter([data.city.lat, data.city.lng]);
+      else if (data.points?.[0]?.lat && data.points?.[0]?.lng) setMapCenter([data.points[0].lat, data.points[0].lng]);
     } catch {
       setError('Не удалось получить данные СДЭК');
     } finally {
@@ -256,7 +263,7 @@ export default function SettingsPage() {
   }
 
   const avatarSrc = avatarPreview
-    || (user?.avatar ? (user.avatar.startsWith('http') ? user.avatar : `${API_BASE}${user.avatar}`) : null);
+    || mediaUrl(user?.avatar);
   const initials = user?.username?.[0]?.toUpperCase() || 'U';
 
   return (

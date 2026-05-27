@@ -55,6 +55,22 @@ services:
       EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
       EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
       EMAIL_USE_SSL: ${EMAIL_USE_SSL:-False}
+      EMAIL_TIMEOUT: ${EMAIL_TIMEOUT:-10}
+      EMAIL_NOTIFICATIONS_ENABLED: ${EMAIL_NOTIFICATIONS_ENABLED:-True}
+      TELEGRAM_NOTIFICATIONS_ENABLED: ${TELEGRAM_NOTIFICATIONS_ENABLED:-True}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ADMIN_CHAT_IDS: ${TELEGRAM_ADMIN_CHAT_IDS:-}
+      TELEGRAM_REQUEST_TIMEOUT: ${TELEGRAM_REQUEST_TIMEOUT:-10}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-2.5-flash}
+      NEWS_IMPORT_SOURCE_URL: ${NEWS_IMPORT_SOURCE_URL:-https://www.numizmatik.ru/news}
+      NEWS_IMPORT_ENABLED: ${NEWS_IMPORT_ENABLED:-False}
+      NEWS_IMPORT_INTERVAL_MINUTES: ${NEWS_IMPORT_INTERVAL_MINUTES:-360}
+      NEWS_IMPORT_LIMIT: ${NEWS_IMPORT_LIMIT:-5}
+      NEWS_IMPORT_MAX_IMAGES: ${NEWS_IMPORT_MAX_IMAGES:-5}
+      NEWS_IMPORT_REQUEST_TIMEOUT: ${NEWS_IMPORT_REQUEST_TIMEOUT:-60}
+      NEWS_IMPORT_USER_AGENT: ${NEWS_IMPORT_USER_AGENT:-CollectITBot/1.0 (+https://localhost) Mozilla/5.0}
       JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-False}
       JWT_COOKIE_SAMESITE: ${JWT_COOKIE_SAMESITE:-Lax}
       CDEK_BASE_URL: ${CDEK_BASE_URL:-https://api.edu.cdek.ru/v2}
@@ -83,6 +99,8 @@ services:
     build:
       context: ./backend
     command: ["celery", "-A", "collectit", "worker", "-l", "info", "--pool=solo"]
+    volumes:
+      - backend_media:/app/media
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-docker-secret-key-change-me-collectit-1234567890}
       DJANGO_DEBUG: ${DJANGO_DEBUG:-True}
@@ -105,6 +123,18 @@ services:
       EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
       EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
       EMAIL_USE_SSL: ${EMAIL_USE_SSL:-False}
+      EMAIL_TIMEOUT: ${EMAIL_TIMEOUT:-10}
+      EMAIL_NOTIFICATIONS_ENABLED: ${EMAIL_NOTIFICATIONS_ENABLED:-True}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-2.5-flash}
+      NEWS_IMPORT_SOURCE_URL: ${NEWS_IMPORT_SOURCE_URL:-https://www.numizmatik.ru/news}
+      NEWS_IMPORT_ENABLED: ${NEWS_IMPORT_ENABLED:-False}
+      NEWS_IMPORT_INTERVAL_MINUTES: ${NEWS_IMPORT_INTERVAL_MINUTES:-360}
+      NEWS_IMPORT_LIMIT: ${NEWS_IMPORT_LIMIT:-5}
+      NEWS_IMPORT_MAX_IMAGES: ${NEWS_IMPORT_MAX_IMAGES:-5}
+      NEWS_IMPORT_REQUEST_TIMEOUT: ${NEWS_IMPORT_REQUEST_TIMEOUT:-60}
+      NEWS_IMPORT_USER_AGENT: ${NEWS_IMPORT_USER_AGENT:-CollectITBot/1.0 (+https://localhost) Mozilla/5.0}
       JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-False}
       JWT_COOKIE_SAMESITE: ${JWT_COOKIE_SAMESITE:-Lax}
       CDEK_BASE_URL: ${CDEK_BASE_URL:-https://api.edu.cdek.ru/v2}
@@ -112,6 +142,42 @@ services:
       CDEK_CLIENT_SECRET: ${CDEK_CLIENT_SECRET:-}
       YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENV: ${SENTRY_ENV:-development}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    image: collectit-backend:latest
+    build:
+      context: ./backend
+    command: ["celery", "-A", "collectit", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-docker-secret-key-change-me-collectit-1234567890}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-True}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend,frontend}
+      DJANGO_SECURE_SSL_REDIRECT: ${DJANGO_SECURE_SSL_REDIRECT:-False}
+      DB_NAME: ${DB_NAME:-collectit_db}
+      DB_USER: ${DB_USER:-collectit_user}
+      DB_PASSWORD: ${DB_PASSWORD:-collectit_pass}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-2.5-flash}
+      NEWS_IMPORT_SOURCE_URL: ${NEWS_IMPORT_SOURCE_URL:-https://www.numizmatik.ru/news}
+      NEWS_IMPORT_ENABLED: ${NEWS_IMPORT_ENABLED:-False}
+      NEWS_IMPORT_INTERVAL_MINUTES: ${NEWS_IMPORT_INTERVAL_MINUTES:-360}
+      NEWS_IMPORT_LIMIT: ${NEWS_IMPORT_LIMIT:-5}
+      NEWS_IMPORT_MAX_IMAGES: ${NEWS_IMPORT_MAX_IMAGES:-5}
+      NEWS_IMPORT_REQUEST_TIMEOUT: ${NEWS_IMPORT_REQUEST_TIMEOUT:-60}
+      NEWS_IMPORT_USER_AGENT: ${NEWS_IMPORT_USER_AGENT:-CollectITBot/1.0 (+https://localhost) Mozilla/5.0}
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENV: ${SENTRY_ENV:-development}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}

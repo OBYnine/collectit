@@ -24,6 +24,13 @@ class Article(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     views_count = models.PositiveIntegerField(default=0)
+    source_site = models.CharField(max_length=120, blank=True)
+    source_url = models.URLField(max_length=1000, blank=True, null=True)
+    source_external_id = models.CharField(max_length=120, blank=True, db_index=True)
+    source_published_at = models.DateTimeField(null=True, blank=True)
+    imported_at = models.DateTimeField(null=True, blank=True)
+    ai_model = models.CharField(max_length=120, blank=True)
+    is_ai_generated = models.BooleanField(default=False)
 
     class Meta:
         db_table = "articles"

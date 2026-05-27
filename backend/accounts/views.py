@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes, authentication_classes
+from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -39,6 +40,12 @@ class ThrottledTokenObtainPairView(TokenObtainPairView):
     throttle_classes = [LoginThrottle]
 
 
+class VerificationEmailUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Не удалось отправить письмо подтверждения. Попробуйте позже."
+    default_code = "verification_email_unavailable"
+
+
 def _setup_yookassa():
     """Настраивает модуль yookassa один раз на запрос. Возвращает True/False."""
     if not settings.YOOKASSA_SHOP_ID or not settings.YOOKASSA_SECRET_KEY:
@@ -68,6 +75,76 @@ def _credit_user(user_id, amount, description, payment_yookassa_id=None):
             payment_yookassa_id=payment_yookassa_id or "",
         )
     return True
+
+
+_YOOKASSA_CANCELLATION_MESSAGES = {
+    "3d_secure_failed": "Не пройдена 3-D Secure проверка. Попробуйте повторить оплату или используйте другую карту.",
+    "call_issuer": "Банк отклонил оплату. Обратитесь в банк или используйте другую карту.",
+    "canceled_by_merchant": "Платеж отменен магазином.",
+    "card_expired": "Срок действия карты истек. Используйте другую карту.",
+    "country_forbidden": "Оплата картой, выпущенной в этой стране, запрещена. Используйте другое платежное средство.",
+    "deal_expired": "Срок жизни сделки истек. Создайте новый платеж, если хотите продолжить оплату.",
+    "expired_on_capture": "Истек срок списания оплаты. Повторите платеж.",
+    "expired_on_confirmation": "Истек срок подтверждения оплаты. Создайте новый платеж и подтвердите его.",
+    "fraud_suspected": "Платеж отклонен из-за подозрения в мошенничестве. Используйте другое платежное средство.",
+    "general_decline": "Платеж отклонен без детальной причины. Обратитесь в банк или попробуйте другой способ оплаты.",
+    "identification_required": "Для кошелька ЮMoney превышены ограничения. Пройдите идентификацию или выберите другой способ оплаты.",
+    "insufficient_funds": "На платежном средстве недостаточно средств. Пополните баланс или используйте другую карту.",
+    "internal_timeout": "ЮKassa не успела обработать платеж. Повторите оплату новым платежом.",
+    "invalid_card_number": "Неверно указан номер карты. Проверьте данные и попробуйте снова.",
+    "invalid_csc": "Неверно указан CVV/CVC-код. Проверьте данные и попробуйте снова.",
+    "issuer_unavailable": "Банк сейчас недоступен. Повторите оплату позже или используйте другую карту.",
+    "payment_method_limit_exceeded": "Превышен лимит платежей для карты или магазина. Используйте другой способ оплаты или повторите позже.",
+    "payment_method_restricted": "Операции этим платежным средством запрещены. Обратитесь в банк или используйте другую карту.",
+    "permission_revoked": "Разрешение на автоплатеж отозвано. Создайте новый платеж и подтвердите оплату.",
+    "unsupported_mobile_operator": "Этот мобильный оператор не поддерживается. Используйте другое платежное средство.",
+}
+
+_YOOKASSA_CANCELLATION_PARTIES = {
+    "merchant": "магазин",
+    "yoo_money": "ЮKassa",
+    "payment_network": "платежная система или банк",
+}
+
+
+def _object_value(obj, key, default=None):
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _payment_metadata_user_id(payment):
+    metadata = _object_value(payment, "metadata", {}) or {}
+    user_id = _object_value(metadata, "user_id")
+    if user_id in (None, ""):
+        return ""
+    return str(user_id).strip()
+
+
+def _payment_cancellation_payload(payment):
+    details = _object_value(payment, "cancellation_details")
+    party = str(_object_value(details, "party", "") or "").strip()
+    reason = str(_object_value(details, "reason", "") or "").strip()
+    message = _YOOKASSA_CANCELLATION_MESSAGES.get(
+        reason,
+        "Платеж отменен. Попробуйте повторить оплату или выберите другой способ оплаты.",
+    )
+    payload = {"party": party, "reason": reason, "message": message}
+    if party:
+        payload["party_label"] = _YOOKASSA_CANCELLATION_PARTIES.get(party, party)
+    return payload
+
+
+def _payment_status_payload(payment):
+    payment_status = str(_object_value(payment, "status", "unknown") or "unknown")
+    payload = {"status": payment_status}
+    if payment_status == "canceled":
+        cancellation_details = _payment_cancellation_payload(payment)
+        payload["cancellation_details"] = cancellation_details
+        payload["message"] = cancellation_details["message"]
+    return payload
 
 
 def _send_verification_email(pending_registration):
@@ -100,7 +177,15 @@ class RegisterView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         pending_registration = serializer.save()
-        _send_verification_email(pending_registration)
+        try:
+            _send_verification_email(pending_registration)
+        except Exception:
+            logger.exception(
+                "Failed to send verification email for pending_registration_id=%s",
+                pending_registration.id,
+            )
+            pending_registration.delete()
+            raise VerificationEmailUnavailable()
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -451,7 +536,19 @@ def verify_payment(request):
     if not payment_id:
         return Response({"detail": "payment_id обязателен."}, status=status.HTTP_400_BAD_REQUEST)
 
-    if Transaction.objects.filter(payment_yookassa_id=payment_id).exists():
+    existing_tx = Transaction.objects.filter(payment_yookassa_id=payment_id).only(
+        "user_id"
+    ).first()
+    if existing_tx:
+        if existing_tx.user_id != request.user.id:
+            logger.warning(
+                "YooKassa verify rejected: payment_id=%s credited_to=%s requested_by=%s",
+                payment_id, existing_tx.user_id, request.user.id,
+            )
+            return Response(
+                {"detail": "Платеж не принадлежит текущему пользователю."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         request.user.refresh_from_db(fields=["balance"])
         return Response({"status": "already_credited", "balance": str(request.user.balance)})
 
@@ -464,8 +561,19 @@ def verify_payment(request):
         logger.error("YooKassa find_one error (payment=%s): %s", payment_id, e)
         return Response({"detail": f"Ошибка ЮKassa: {e}"}, status=status.HTTP_502_BAD_GATEWAY)
 
+    payment_user_id = _payment_metadata_user_id(payment)
+    if payment_user_id != str(request.user.id):
+        logger.warning(
+            "YooKassa verify rejected: metadata user mismatch payment=%s metadata_user=%s requested_by=%s",
+            payment_id, payment_user_id or "<missing>", request.user.id,
+        )
+        return Response(
+            {"detail": "Платеж не принадлежит текущему пользователю."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     if payment.status != "succeeded":
-        return Response({"status": payment.status})
+        return Response(_payment_status_payload(payment))
 
     amount = Decimal(str(payment.amount.value))
     credited = _credit_user(
@@ -687,7 +795,7 @@ def yookassa_webhook(request):
     payment_id = obj.get("id", "")
     logger.info("YooKassa webhook: event=%s payment_id=%s ip=%s", event, payment_id, ip)
 
-    if event != "payment.succeeded" or not payment_id:
+    if event not in ("payment.succeeded", "payment.canceled") or not payment_id:
         # Остальные события (waiting_for_capture, canceled и т.д.) просто подтверждаем.
         return Response({"ok": True})
 
@@ -702,18 +810,40 @@ def yookassa_webhook(request):
         logger.error("YooKassa webhook find_one failed: %s", e)
         return Response({"detail": "yookassa error"}, status=status.HTTP_502_BAD_GATEWAY)
 
+    if event == "payment.canceled" or payment.status == "canceled":
+        cancellation_details = _payment_cancellation_payload(payment)
+        logger.warning(
+            "YooKassa payment canceled: payment_id=%s user_id=%s party=%s reason=%s",
+            payment_id,
+            _payment_metadata_user_id(payment) or "<missing>",
+            cancellation_details.get("party") or "<missing>",
+            cancellation_details.get("reason") or "<missing>",
+        )
+        return Response({
+            "ok": True,
+            "status": payment.status,
+            "cancellation_details": cancellation_details,
+        })
+
     if payment.status != "succeeded":
         return Response({"ok": True, "status": payment.status})
 
-    metadata = payment.metadata or {}
-    user_id = metadata.get("user_id")
+    user_id = _payment_metadata_user_id(payment)
     if not user_id:
         logger.error("YooKassa webhook: user_id missing in metadata, payment=%s", payment_id)
         return Response({"detail": "no user_id in metadata"}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        logger.error(
+            "YooKassa webhook: invalid user_id in metadata, payment=%s user_id=%s",
+            payment_id, user_id,
+        )
+        return Response({"detail": "invalid user_id in metadata"}, status=status.HTTP_400_BAD_REQUEST)
 
     amount = Decimal(str(payment.amount.value))
     credited = _credit_user(
-        user_id=int(user_id),
+        user_id=user_id_int,
         amount=amount,
         description="Пополнение через ЮKassa (webhook)",
         payment_yookassa_id=payment_id,

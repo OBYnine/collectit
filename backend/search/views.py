@@ -14,7 +14,7 @@ def search_items(request):
     """
     GET /api/search/?q=монета
     """
-    qs = Item.objects.filter(is_for_sale=True).select_related("owner", "collection")
+    qs = Item.objects.filter(is_for_sale=True).select_related("owner", "collection").prefetch_related("images")
 
     # Исключаем предметы самого пользователя
     if request.user.is_authenticated:
@@ -37,6 +37,9 @@ def search_items(request):
             qs = qs.filter(price__lte=Decimal(str(max_price)))
         except InvalidOperation:
             return Response({"detail": "Некорректная максимальная цена."}, status=400)
+
+    if request.query_params.get("has_photo") in ("1", "true", "yes"):
+        qs = qs.filter(Q(image__isnull=False, image__gt="") | Q(images__isnull=False)).distinct()
 
     ordering = request.query_params.get("ordering", "-created_at")
     allowed = ["price", "-price", "created_at", "-created_at"]

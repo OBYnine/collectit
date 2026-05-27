@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import PendingRegistration, User
+from .models import PendingRegistration, Transaction, User
 
 
 @admin.register(User)
@@ -25,3 +25,11 @@ class PendingRegistrationAdmin(admin.ModelAdmin):
     list_display = ["email", "username", "created_at", "expires_at"]
     search_fields = ["email", "username"]
     readonly_fields = ["username", "email", "password_hash", "token", "created_at", "expires_at"]
+
+
+@admin.register(Transaction)
+class TransactionAdmin(admin.ModelAdmin):
+    list_display = ["id", "user", "kind", "amount", "description", "payment_yookassa_id", "created_at"]
+    list_filter = ["kind", "created_at"]
+    search_fields = ["user__username", "user__email", "description", "payment_yookassa_id"]
+    readonly_fields = ["user", "kind", "amount", "description", "payment_yookassa_id", "created_at"]

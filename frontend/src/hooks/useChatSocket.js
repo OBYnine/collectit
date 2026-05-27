@@ -92,5 +92,16 @@ export function useChatSocket(chatId, onMessage) {
     }
   }
 
-  return { socketReady, sendMessage };
+  function markRead() {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      ws.send(JSON.stringify({ type: 'read' }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return { socketReady, sendMessage, markRead };
 }

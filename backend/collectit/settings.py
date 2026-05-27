@@ -190,7 +190,7 @@ USE_TZ = True
 # --- Static & Media ---
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-MEDIA_URL = "media/"
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -239,6 +239,34 @@ EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False").lower() in ("true", "1")
 EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False").lower() in ("true", "1")
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+EMAIL_NOTIFICATIONS_ENABLED = os.getenv("EMAIL_NOTIFICATIONS_ENABLED", "True").lower() in ("true", "1", "yes")
+
+# --- Telegram admin notifications ---
+TELEGRAM_NOTIFICATIONS_ENABLED = os.getenv("TELEGRAM_NOTIFICATIONS_ENABLED", "True").lower() in ("true", "1", "yes")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_ADMIN_CHAT_IDS = [
+    chat_id.strip()
+    for chat_id in os.getenv("TELEGRAM_ADMIN_CHAT_IDS", "").replace(";", ",").split(",")
+    if chat_id.strip()
+]
+TELEGRAM_REQUEST_TIMEOUT = int(os.getenv("TELEGRAM_REQUEST_TIMEOUT", "10"))
+
+# --- AI news import ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip()
+GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash").strip()
+NEWS_IMPORT_SOURCE_URL = os.getenv("NEWS_IMPORT_SOURCE_URL", "https://www.numizmatik.ru/news").strip()
+NEWS_IMPORT_USER_AGENT = os.getenv(
+    "NEWS_IMPORT_USER_AGENT",
+    "CollectITBot/1.0 (+https://localhost) Mozilla/5.0",
+).strip()
+NEWS_IMPORT_ENABLED = os.getenv("NEWS_IMPORT_ENABLED", "False").lower() in ("true", "1", "yes")
+NEWS_IMPORT_INTERVAL_MINUTES = int(os.getenv("NEWS_IMPORT_INTERVAL_MINUTES", "360"))
+NEWS_IMPORT_LIMIT = int(os.getenv("NEWS_IMPORT_LIMIT", "5"))
+NEWS_IMPORT_MAX_IMAGES = int(os.getenv("NEWS_IMPORT_MAX_IMAGES", "5"))
+NEWS_IMPORT_REQUEST_TIMEOUT = int(os.getenv("NEWS_IMPORT_REQUEST_TIMEOUT", "20"))
+NEWS_IMPORT_IMAGE_MAX_BYTES = int(os.getenv("NEWS_IMPORT_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
 
 # --- Redis / Channels / Celery ---
 # Если REDIS_URL не задан, channels работают через InMemory layer (без масштабирования),
@@ -270,6 +298,14 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
+
+CELERY_BEAT_SCHEDULE = {}
+if NEWS_IMPORT_ENABLED:
+    CELERY_BEAT_SCHEDULE["import-numizmatik-news"] = {
+        "task": "news.tasks.import_numizmatik_news_task",
+        "schedule": max(NEWS_IMPORT_INTERVAL_MINUTES, 1) * 60,
+        "kwargs": {"limit": NEWS_IMPORT_LIMIT},
+    }
 
 # --- Sentry ---
 # Пустой DSN = отключено. Задаётся через SENTRY_DSN в .env.

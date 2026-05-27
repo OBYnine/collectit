@@ -14,6 +14,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.layers import get_channel_layer
 
 from .models import Chat, Message
+from .realtime import broadcast_chat_unread_count, notify_chat_message
 
 
 def chat_group_name(chat_id):
@@ -87,6 +88,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 self.group,
                 {"type": "chat.message", "payload": payload},
             )
+        elif msg_type == "read":
+            await self._mark_read(self.chat_id, self.user_id)
 
     # Серверный handler: вызов через group_send → доходит как event["type"] = "chat.message"
     async def chat_message(self, event):
@@ -94,11 +97,33 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def _is_participant(self, chat_id, user_id):
-        return Chat.objects.filter(pk=chat_id, participants__id=user_id).exists()
+        chat = Chat.objects.filter(pk=chat_id, participants__id=user_id).first()
+        if not chat:
+            return False
+        user_ref = type("UserRef", (), {"id": user_id, "is_authenticated": True})()
+        return not chat.is_deleted_for(user_ref)
 
     @database_sync_to_async
     def _create_message(self, chat_id, sender_id, text):
         msg = Message.objects.create(chat_id=chat_id, sender_id=sender_id, text=text)
         # Принудительно тянем sender, чтобы не словить sync-обращение в async-коде
         msg.sender  # noqa: B018
+        notify_chat_message(msg)
         return msg
+
+    @database_sync_to_async
+    def _mark_read(self, chat_id, user_id):
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        user = User.objects.filter(pk=user_id).first()
+        if not user:
+            return
+        updated = (
+            Message.objects
+            .filter(chat_id=chat_id, is_read=False)
+            .exclude(sender_id=user_id)
+            .update(is_read=True)
+        )
+        if updated:
+            broadcast_chat_unread_count(user)

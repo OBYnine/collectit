@@ -7,6 +7,8 @@ from django.db.models import Case, IntegerField, Value, When
 from django.utils import timezone
 
 from notifications.consumers import broadcast_to_staff, broadcast_to_user
+from notifications.email import send_notification_email
+from notifications.telegram import send_support_ticket_telegram
 from .models import SupportMessage, SupportTicket
 
 
@@ -37,6 +39,7 @@ def _dt(value):
 def _notify(user, title, body):
     from notifications.models import Notification
     Notification.objects.create(user=user, title=title, body=body)
+    send_notification_email(user, title, body)
 
 
 def _notify_staff(title, body):
@@ -45,6 +48,7 @@ def _notify_staff(title, body):
     staff = User.objects.filter(is_active=True, is_staff=True).only('id')
     for admin in staff:
         Notification.objects.create(user=admin, title=title, body=body)
+        send_notification_email(admin, title, body)
 
 
 def _serialize_message(message):
@@ -129,6 +133,7 @@ def ticket_list(request):
         'Новое обращение в поддержку',
         f'{request.user.username}: {ticket.get_topic_display_ru()}',
     )
+    send_support_ticket_telegram(ticket, event='new', message_text=message)
     _broadcast_ticket_to_staff(ticket)
     ticket = SupportTicket.objects.prefetch_related('messages__sender').get(pk=ticket.pk)
     return Response(_serialize(ticket), status=status.HTTP_201_CREATED)
@@ -163,6 +168,7 @@ def ticket_message_create(request, pk):
         'Пользователь дополнил обращение',
         f'{request.user.username} написал по тикету #{ticket.pk}: {ticket.get_topic_display_ru()}',
     )
+    send_support_ticket_telegram(ticket, event='reply', message_text=message)
     _broadcast_ticket_to_user(ticket)
     _broadcast_ticket_to_staff(ticket)
 

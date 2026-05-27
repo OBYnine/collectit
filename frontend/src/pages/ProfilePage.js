@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getMyCollections, createCollection, updateCollection, deleteCollection, getCollection, createItem, updateItem, deleteItem, getWishlist, toggleWishlist, getDeals, getMessages } from '../api/client';
+import { getMyCollections, createCollection, updateCollection, deleteCollection, getCollection, createItem, updateItem, deleteItem, getWishlist, toggleWishlist, getDeals, getMessages, hideChat } from '../api/client';
 import { useUser } from '../context/UserContext';
+import { mediaUrl } from '../utils/config';
+import { itemCoverUrl } from '../utils/itemImages';
+import ItemGallery from '../components/ItemGallery';
 
 function relativeDate(dateStr) {
   const days = Math.floor((Date.now() - new Date(dateStr)) / 86400000);
@@ -14,6 +17,20 @@ function relativeDate(dateStr) {
 
 const EMOJI_PRESETS = ['📦', '🪙', '📮', '🎵', '🏺', '🃏', '🔮', '⚙️', '🎨', '🌿'];
 const COLOR_PRESETS = ['#e8a635', '#3b82f6', '#22c55e', '#ef4444', '#a855f7', '#ec4899', '#14b8a6', '#f97316'];
+
+function editableItemImages(item) {
+  const entries = [];
+  const primary = mediaUrl(item?.image);
+  for (const image of item?.images || []) {
+    const src = mediaUrl(image.image);
+    if (!src) continue;
+    entries.push({ id: image.id, src, isPrimary: primary && src === primary });
+  }
+  if (primary && !entries.some(entry => entry.src === primary)) {
+    entries.unshift({ id: null, src: primary, isPrimary: true });
+  }
+  return entries;
+}
 
 function CreateCollectionModal({ onClose, onCreated }) {
   const [name, setName] = useState('');
@@ -163,16 +180,20 @@ function AddItemModal({ collectionId, onClose, onAdded }) {
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [isForSale, setIsForSale] = useState(false);
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   function handleImageChange(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+    const files = Array.from(e.target.files || []).slice(0, 8);
+    setImageFiles(files);
+    setImagePreviews(files.map(file => URL.createObjectURL(file)));
+  }
+
+  function handleRemoveNew(index) {
+    setImageFiles(prev => prev.filter((_, i) => i !== index));
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
   }
 
   async function handleSubmit(e) {
@@ -187,7 +208,10 @@ function AddItemModal({ collectionId, onClose, onAdded }) {
       fd.append('collection', collectionId);
       fd.append('is_for_sale', isForSale);
       if (price) fd.append('price', price);
-      if (imageFile) fd.append('image', imageFile);
+      imageFiles.forEach((file, index) => {
+        fd.append('images', file);
+        if (index === 0) fd.append('image', file);
+      });
       const item = await createItem(fd);
       onAdded(item);
       onClose();
@@ -216,18 +240,35 @@ function AddItemModal({ collectionId, onClose, onAdded }) {
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {/* Photo */}
-          <label className="cursor-pointer block">
-            <div className="w-full h-32 bg-[#0a0e17] border border-dashed border-white/[.08] rounded-xl flex items-center justify-center overflow-hidden transition-colors hover:border-white/[.14]">
-              {imagePreview
-                ? <img src={imagePreview} alt="" className="w-full h-full object-cover" />
-                : <div className="text-center text-[#4a5568]">
-                    <div className="text-2xl mb-1">📷</div>
-                    <div className="text-xs">Выбрать фото</div>
+          <div>
+            <label className="text-[11px] text-[#4a5568] uppercase tracking-widest mb-2 block">Фото</label>
+            {imagePreviews.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                {imagePreviews.map((src, i) => (
+                  <div key={`${src}-${i}`} className="relative h-20 rounded-lg overflow-hidden border border-[#e8a635]/40 bg-[#0a0e17]">
+                    <img src={src} alt="" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveNew(i)}
+                      className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/65 text-white text-sm flex items-center justify-center"
+                      aria-label="Убрать новое фото"
+                    >
+                      ×
+                    </button>
                   </div>
-              }
-            </div>
-            <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
-          </label>
+                ))}
+              </div>
+            )}
+            <label className="cursor-pointer block">
+              <div className="w-full h-24 bg-[#0a0e17] border border-dashed border-white/[.08] rounded-xl flex items-center justify-center overflow-hidden transition-colors hover:border-white/[.14]">
+                <div className="text-center text-[#4a5568]">
+                  <div className="text-2xl mb-1">+</div>
+                  <div className="text-xs">Добавить фото</div>
+                </div>
+              </div>
+              <input type="file" accept="image/*" multiple onChange={handleImageChange} className="hidden" />
+            </label>
+          </div>
 
           {/* Name */}
           <div>
@@ -300,17 +341,31 @@ function EditItemModal({ item, onClose, onUpdated, onDeleted }) {
   const [description, setDescription] = useState(item.description || '');
   const [price, setPrice] = useState(item.price || '');
   const [isForSale, setIsForSale] = useState(item.is_for_sale || false);
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(item.image || null);
+  const [existingImages, setExistingImages] = useState(() => editableItemImages(item));
+  const [deleteImageIds, setDeleteImageIds] = useState([]);
+  const [clearPrimaryImage, setClearPrimaryImage] = useState(false);
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   function handleImageChange(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+    const files = Array.from(e.target.files || []).slice(0, 8);
+    setImageFiles(prev => [...prev, ...files].slice(0, 8));
+    setImagePreviews(prev => [...prev, ...files.map(file => URL.createObjectURL(file))].slice(0, 8));
+    e.target.value = '';
+  }
+
+  function handleRemoveExisting(entry) {
+    setExistingImages(prev => prev.filter(image => image.src !== entry.src));
+    if (entry.id) setDeleteImageIds(prev => [...prev, entry.id]);
+    if (entry.isPrimary && !entry.id) setClearPrimaryImage(true);
+  }
+
+  function handleRemoveNew(index) {
+    setImageFiles(prev => prev.filter((_, i) => i !== index));
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
   }
 
   async function handleSubmit(e) {
@@ -325,7 +380,14 @@ function EditItemModal({ item, onClose, onUpdated, onDeleted }) {
       fd.append('is_for_sale', isForSale);
       if (price) fd.append('price', price);
       else fd.append('price', '');
-      if (imageFile) fd.append('image', imageFile);
+      deleteImageIds.forEach(id => fd.append('delete_image_ids', id));
+      if (clearPrimaryImage) fd.append('clear_image', 'true');
+      imageFiles.forEach((file, index) => {
+        fd.append('images', file);
+        if (index === 0 && existingImages.length === 0) {
+          fd.append('image', file);
+        }
+      });
       const updated = await updateItem(item.id, fd);
       onUpdated(updated);
       onClose();
@@ -369,18 +431,52 @@ function EditItemModal({ item, onClose, onUpdated, onDeleted }) {
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {/* Photo */}
-          <label className="cursor-pointer block">
-            <div className="w-full h-32 bg-[#0a0e17] border border-dashed border-white/[.08] rounded-xl flex items-center justify-center overflow-hidden transition-colors hover:border-white/[.14]">
-              {imagePreview
-                ? <img src={imagePreview} alt="" className="w-full h-full object-cover" />
-                : <div className="text-center text-[#4a5568]">
-                    <div className="text-2xl mb-1">📷</div>
-                    <div className="text-xs">Выбрать фото</div>
+          <div>
+            <label className="text-[11px] text-[#4a5568] uppercase tracking-widest mb-2 block">Фото</label>
+            {existingImages.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                {existingImages.map(entry => (
+                  <div key={entry.src} className="relative h-20 rounded-lg overflow-hidden border border-white/[.08] bg-[#0a0e17]">
+                    <img src={entry.src} alt="" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveExisting(entry)}
+                      className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/65 text-white text-sm flex items-center justify-center"
+                      aria-label="Удалить фото"
+                    >
+                      ×
+                    </button>
                   </div>
-              }
-            </div>
-            <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
-          </label>
+                ))}
+              </div>
+            )}
+            {imagePreviews.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                {imagePreviews.map((src, i) => (
+                  <div key={`${src}-${i}`} className="relative h-20 rounded-lg overflow-hidden border border-[#e8a635]/40 bg-[#0a0e17]">
+                    <img src={src} alt="" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveNew(i)}
+                      className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/65 text-white text-sm flex items-center justify-center"
+                      aria-label="Убрать новое фото"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className="cursor-pointer block">
+              <div className="w-full h-24 bg-[#0a0e17] border border-dashed border-white/[.08] rounded-xl flex items-center justify-center overflow-hidden transition-colors hover:border-white/[.14]">
+                <div className="text-center text-[#4a5568]">
+                  <div className="text-2xl mb-1">+</div>
+                  <div className="text-xs">Добавить фото</div>
+                </div>
+              </div>
+              <input type="file" accept="image/*" multiple onChange={handleImageChange} className="hidden" />
+            </label>
+          </div>
 
           {/* Name */}
           <div>
@@ -626,8 +722,8 @@ function EditCollectionModal({ collection, onClose, onUpdated, onDeleted }) {
               <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))' }}>
                 {items.map(item => (
                   <div key={item.id} onClick={() => setEditingItem(item)} className="bg-[#0a0e17] border border-white/[.06] rounded-lg overflow-hidden cursor-pointer transition-colors hover:border-white/[.12]">
-                    {item.image
-                      ? <img src={item.image} alt="" className="w-full h-16 object-cover" />
+                    {itemCoverUrl(item)
+                      ? <img src={itemCoverUrl(item)} alt="" className="w-full h-16 object-cover" />
                       : <div className="w-full h-16 flex items-center justify-center text-2xl bg-[#0d1220]">📦</div>
                     }
                     <div className="p-2">
@@ -719,8 +815,6 @@ function EditCollectionModal({ collection, onClose, onUpdated, onDeleted }) {
   );
 }
 
-const API_BASE = process.env.REACT_APP_API_URL?.replace('/api', '') || 'http://127.0.0.1:8000';
-
 function WishlistItemModal({ item, onClose, onUnliked }) {
   const navigate = useNavigate();
 
@@ -730,12 +824,7 @@ function WishlistItemModal({ item, onClose, onUnliked }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const imageSrc = item.image
-    ? (item.image.startsWith('http') ? item.image : `${API_BASE}${item.image}`)
-    : null;
-  const avatarSrc = item.owner_avatar
-    ? (item.owner_avatar.startsWith('http') ? item.owner_avatar : `${API_BASE}${item.owner_avatar}`)
-    : null;
+  const avatarSrc = mediaUrl(item.owner_avatar);
   const avatarInitial = item.owner_username?.[0]?.toUpperCase() || 'U';
 
   async function handleUnlike(e) {
@@ -755,11 +844,8 @@ function WishlistItemModal({ item, onClose, onUnliked }) {
     >
       <div className="w-full max-w-lg bg-[#151c2c] border border-white/[.08] rounded-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
         {/* Фото */}
-        <div className="h-56 bg-[#0d1321] flex items-center justify-center overflow-hidden relative">
-          {imageSrc
-            ? <img src={imageSrc} alt={item.name} className="w-full h-full object-cover" />
-            : <span className="text-6xl opacity-20">📦</span>
-          }
+        <div className="relative">
+          <ItemGallery item={item} alt={item.name} />
           <button
             onClick={onClose}
             className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 text-white/70 hover:text-white transition-colors text-lg"
@@ -818,7 +904,7 @@ function WishlistItemModal({ item, onClose, onUnliked }) {
             <button
               onClick={() => {
                 onClose();
-                window.dispatchEvent(new CustomEvent('open-chat', { detail: { username: item.owner_username, avatar: avatarSrc, itemName: item.name, itemImage: imageSrc, itemPrice: item.price, itemId: item.id, sellerIsOther: true } }));
+                window.dispatchEvent(new CustomEvent('open-chat', { detail: { username: item.owner_username, avatar: avatarSrc, itemName: item.name, itemImage: itemCoverUrl(item), itemPrice: item.price, itemId: item.id, sellerIsOther: true } }));
               }}
               className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/[.04] hover:bg-white/[.07] text-sm text-[#8892a4] hover:text-[#e8eaf0] transition-colors"
             >
@@ -835,7 +921,7 @@ function WishlistItemModal({ item, onClose, onUnliked }) {
 }
 
 function ProfileHeader({ user }) {
-  const avatarSrc = user?.avatar ? `${API_BASE}${user.avatar}` : null;
+  const avatarSrc = mediaUrl(user?.avatar);
   const initials = user?.username?.[0]?.toUpperCase() || 'U';
 
   return (
@@ -972,9 +1058,7 @@ function CollectionsCanvas({ collections, wishlistItems, onNewCollection, onEdit
             <>
               <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
                 {wishlistItems.map((item, i) => {
-                  const imgSrc = item.image
-                    ? (item.image.startsWith('http') ? item.image : `${API_BASE}${item.image}`)
-                    : null;
+                  const imgSrc = itemCoverUrl(item);
                   return (
                     <div
                       key={item.id}
@@ -1019,10 +1103,10 @@ function CollectionsCanvas({ collections, wishlistItems, onNewCollection, onEdit
   );
 }
 
-const API_BASE_DEALS = process.env.REACT_APP_API_URL?.replace('/api', '') || 'http://127.0.0.1:8000';
-
-function ArchiveChatModal({ deal, onClose }) {
+function ArchiveChatModal({ deal, onClose, onDelete }) {
   const [messages, setMessages] = useState([]);
+  const [deleting, setDeleting] = useState(false);
+  const supportCode = deal.support_code || `CHAT-${deal.id}`;
 
   useEffect(() => {
     getMessages(deal.id).then(data => {
@@ -1043,6 +1127,14 @@ function ArchiveChatModal({ deal, onClose }) {
             <p className="text-xs text-[#8892a4]">
               {deal.other_participant?.username} · {Number(deal.price).toLocaleString('ru-RU')} ₽
             </p>
+            <button
+              type="button"
+              onClick={() => navigator.clipboard?.writeText(supportCode)}
+              title="Скопировать код для поддержки"
+              className="mt-1 font-['JetBrains_Mono'] text-[11px] text-[#e8a635] hover:text-white transition-colors"
+            >
+              {supportCode}
+            </button>
           </div>
           <div className="flex items-center gap-3">
             {deal.rating != null && deal.viewer_role === 'seller' && (
@@ -1067,8 +1159,25 @@ function ArchiveChatModal({ deal, onClose }) {
             </div>
           ))}
         </div>
-        <div className="px-5 py-3 border-t border-white/[.06] shrink-0 text-xs text-[#4a5568] text-center">
-          Архивный чат · только для просмотра
+        <div className="px-5 py-3 border-t border-white/[.06] shrink-0 flex items-center justify-between gap-3">
+          <span className="text-xs text-[#4a5568]">Архивный чат · только для просмотра</span>
+          <button
+            disabled={deleting}
+            onClick={async () => {
+              if (!window.confirm('Удалить этот архивный чат только у вас?')) return;
+              setDeleting(true);
+              try {
+                await hideChat(deal.id);
+                onDelete?.(deal.id);
+                onClose();
+              } catch {
+                setDeleting(false);
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg border border-red-500/20 text-xs text-red-400 hover:bg-red-500/[.08] disabled:opacity-50 transition-colors shrink-0"
+          >
+            {deleting ? '...' : 'Удалить у меня'}
+          </button>
         </div>
       </div>
     </div>
@@ -1100,9 +1209,7 @@ function DealsTab() {
     <>
       <div className="flex flex-col gap-3 py-2">
         {deals.map(deal => {
-          const img = deal.item_image
-            ? (deal.item_image.startsWith('http') ? deal.item_image : `${API_BASE_DEALS}${deal.item_image}`)
-            : null;
+          const img = mediaUrl(deal.item_image);
           const isSeller = deal.viewer_role === 'seller';
           const date = new Date(deal.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -1141,7 +1248,11 @@ function DealsTab() {
       </div>
 
       {selected && (
-        <ArchiveChatModal deal={selected} onClose={() => setSelected(null)} />
+        <ArchiveChatModal
+          deal={selected}
+          onClose={() => setSelected(null)}
+          onDelete={id => setDeals(prev => prev.filter(deal => deal.id !== id))}
+        />
       )}
     </>
   );

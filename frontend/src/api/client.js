@@ -471,6 +471,11 @@ export async function acknowledgeRating(chatId) {
   return res.json();
 }
 
+export async function hideChat(chatId) {
+  const res = await apiFetch(`/chats/${chatId}/hide/`, { method: "DELETE" });
+  return res.json();
+}
+
 export async function getDeals() {
   const res = await apiFetch("/chats/deals/");
   return res.json();

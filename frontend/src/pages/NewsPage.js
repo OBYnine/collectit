@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getNews, getArticle, createArticle, updateArticle, deleteArticle } from '../api/client';
 import { useUser } from '../context/UserContext';
-
-const API_BASE = process.env.REACT_APP_API_URL?.replace('/api', '') || 'http://127.0.0.1:8000';
+import { mediaUrl } from '../utils/config';
 
 function imgSrc(url) {
-  if (!url) return null;
-  return url.startsWith('http') ? url : `${API_BASE}${url}`;
+  return mediaUrl(url);
 }
 
 function Lightbox({ images, startIndex, onClose }) {
@@ -88,6 +86,38 @@ function Lightbox({ images, startIndex, onClose }) {
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function contentBlocks(content) {
+  return (content || '')
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean);
+}
+
+function renderInlineMarkdown(text) {
+  const parts = [];
+  const re = /\*\*(.+?)\*\*/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    parts.push(
+      <strong key={`${match.index}-${match[1]}`} className="font-semibold text-[#e8eaf0]">
+        {match[1]}
+      </strong>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length ? parts : text;
 }
 
 function ArticleModal({ article, onClose, onSaved, onDeleted }) {
@@ -303,7 +333,7 @@ export default function NewsPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-10 py-9">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-10 py-9">
       <div className="flex items-start justify-between mb-8 anim-in">
         <div>
           <h1 className="text-[22px] font-bold tracking-tight mb-1">Новости</h1>
@@ -332,7 +362,7 @@ export default function NewsPage() {
               key={n.id}
               className={`bg-[#151c2c] border border-white/[.06] rounded-xl overflow-hidden transition-all duration-200 hover:border-white/[.1] hover:bg-[#1a2236] anim-in anim-d${i + 1}`}
             >
-              <div className="px-6 py-4">
+              <div className="px-5 sm:px-7 py-5 sm:py-6">
                 <div className="flex items-start justify-between gap-3 mb-1">
                   <div className="text-[17px] font-semibold leading-snug">{n.title}</div>
                   <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
@@ -353,11 +383,28 @@ export default function NewsPage() {
                   </div>
                 </div>
 
-                <div className="text-sm text-[#8892a4] leading-relaxed">{n.excerpt}</div>
+                <div className="mt-4 space-y-4 text-[15px] text-[#c9d0dc] leading-7">
+                  {contentBlocks(n.content || n.excerpt).map((block, idx) => (
+                    <p key={idx}>{renderInlineMarkdown(block)}</p>
+                  ))}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {n.source_url && (
+                    <a
+                      href={n.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex text-[11px] text-[#e8a635] hover:text-[#f0b84a] transition-colors"
+                    >
+                      Источник: {n.source_site || 'оригинальная публикация'}
+                    </a>
+                  )}
+                </div>
 
                 {/* Фотографии в конце карточки */}
                 {n.images?.length > 0 && (
-                  <div className={`mt-4 grid gap-1.5 ${n.images.length === 1 ? 'grid-cols-1' : n.images.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                  <div className={`mt-5 grid gap-2 ${n.images.length === 1 ? 'grid-cols-1' : n.images.length === 2 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3'}`}>
                     {n.images.map((img, imgIdx) => (
                       <div
                         key={img.id}

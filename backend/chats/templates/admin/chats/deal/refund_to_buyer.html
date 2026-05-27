@@ -1,0 +1,61 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url 'admin:chats_deal_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; <a href="{% url 'admin:chats_deal_change' deal.pk %}">{{ deal.public_id }}</a>
+  &rsaquo; Вернуть покупателю
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>Вернуть удержанные средства покупателю</h1>
+
+<div class="module">
+  <table>
+    <tbody>
+      <tr>
+        <th>ID сделки</th>
+        <td>{{ deal.public_id }}</td>
+      </tr>
+      <tr>
+        <th>Предмет</th>
+        <td>{{ deal.subject|default:"предмет" }}</td>
+      </tr>
+      <tr>
+        <th>Покупатель</th>
+        <td>{{ deal.buyer|default:"-" }}</td>
+      </tr>
+      <tr>
+        <th>Продавец</th>
+        <td>{{ deal.seller|default:"-" }}</td>
+      </tr>
+      <tr>
+        <th>Удержано</th>
+        <td>{{ deal.held_amount }} {{ deal.currency }}</td>
+      </tr>
+      <tr>
+        <th>Статус удержания</th>
+        <td>{{ deal.get_escrow_status_display }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+{% if deal.can_refund_to_buyer %}
+  <p>После подтверждения сумма будет возвращена на баланс покупателя, а сделка будет отмечена как завершенная.</p>
+  <form method="post">
+    {% csrf_token %}
+    <div class="submit-row">
+      <input type="submit" class="default" value="Вернуть покупателю">
+      <a class="button cancel-link" href="{% url 'admin:chats_deal_change' deal.pk %}">Отмена</a>
+    </div>
+  </form>
+{% else %}
+  <p class="errornote">По этой сделке нет удержанных средств, доступных для возврата покупателю.</p>
+  <p><a class="button" href="{% url 'admin:chats_deal_change' deal.pk %}">Вернуться к сделке</a></p>
+{% endif %}
+{% endblock %}
