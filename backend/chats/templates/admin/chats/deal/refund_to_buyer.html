@@ -38,6 +38,14 @@
         <td>{{ deal.held_amount }} {{ deal.currency }}</td>
       </tr>
       <tr>
+        <th>Сервисный сбор</th>
+        <td>{{ deal.service_fee_amount }} {{ deal.currency }}</td>
+      </tr>
+      <tr>
+        <th>К возврату покупателю</th>
+        <td>{{ deal.refund_amount }} {{ deal.currency }}</td>
+      </tr>
+      <tr>
         <th>Статус удержания</th>
         <td>{{ deal.get_escrow_status_display }}</td>
       </tr>

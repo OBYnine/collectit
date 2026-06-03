@@ -72,6 +72,7 @@ function ItemModal({ item, liked, onToggleLike, onClose }) {
             <div className="mb-6">
               <div className="text-[10px] text-[#4a5568] uppercase tracking-wider mb-0.5">Цена</div>
               <div className="font-['JetBrains_Mono'] text-[#e8a635] font-bold text-base">{formatPrice(item.price)}</div>
+              <div className="mt-1 text-[11px] text-[#4a5568]">Сервисный сбор 7% включён.</div>
             </div>
           )}
 
@@ -102,7 +103,7 @@ function ItemModal({ item, liked, onToggleLike, onClose }) {
               <button
                 onClick={() => {
                   onClose();
-                  window.dispatchEvent(new CustomEvent('open-chat', { detail: { username: item.owner_username, avatar: avatarSrc, itemName: item.name, itemImage: itemCoverUrl(item), itemPrice: item.price, itemId: item.id, sellerIsOther: true } }));
+                  window.dispatchEvent(new CustomEvent('open-chat', { detail: { username: item.owner_username, avatar: avatarSrc, itemName: item.name, itemImage: itemCoverUrl(item), itemPrice: item.seller_price ?? item.price, itemId: item.id, sellerIsOther: true } }));
                 }}
                 className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/[.04] hover:bg-white/[.07] text-sm text-[#8892a4] hover:text-[#e8eaf0] transition-colors"
               >

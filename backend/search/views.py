@@ -6,6 +6,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from collectibles.models import Item
 from collectibles.serializers import ItemSerializer
+from collectit.pricing import seller_amount_from_buyer_amount
 
 
 @api_view(["GET"])
@@ -27,14 +28,14 @@ def search_items(request):
     min_price = request.query_params.get("min_price")
     if min_price:
         try:
-            qs = qs.filter(price__gte=Decimal(str(min_price)))
+            qs = qs.filter(price__gte=seller_amount_from_buyer_amount(Decimal(str(min_price))))
         except InvalidOperation:
             return Response({"detail": "Некорректная минимальная цена."}, status=400)
 
     max_price = request.query_params.get("max_price")
     if max_price:
         try:
-            qs = qs.filter(price__lte=Decimal(str(max_price)))
+            qs = qs.filter(price__lte=seller_amount_from_buyer_amount(Decimal(str(max_price))))
         except InvalidOperation:
             return Response({"detail": "Некорректная максимальная цена."}, status=400)
 

@@ -7,6 +7,21 @@ export function formatPrice(price) {
   return `${n.toLocaleString('ru-RU')} ₽`;
 }
 
+export function buyerPriceWithFee(price) {
+  if (price === null || price === undefined || price === '') return null;
+  const n = Number(price);
+  if (Number.isNaN(n)) return null;
+  return Math.round(n * 1.07 * 100) / 100;
+}
+
+export function displayBuyerPrice(item) {
+  return item?.buyer_price ?? item?.price ?? null;
+}
+
+export function displaySellerPrice(item) {
+  return item?.seller_price ?? item?.price ?? null;
+}
+
 export function formatDate(dateStr, opts = {}) {
   if (!dateStr) return '';
   const d = new Date(dateStr);

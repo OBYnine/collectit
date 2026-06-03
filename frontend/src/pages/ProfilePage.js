@@ -4,6 +4,7 @@ import { getMyCollections, createCollection, updateCollection, deleteCollection,
 import { useUser } from '../context/UserContext';
 import { mediaUrl } from '../utils/config';
 import { itemCoverUrl } from '../utils/itemImages';
+import { buyerPriceWithFee, formatPrice } from '../utils/format';
 import ItemGallery from '../components/ItemGallery';
 
 function relativeDate(dateStr) {
@@ -184,6 +185,7 @@ function AddItemModal({ collectionId, onClose, onAdded }) {
   const [imagePreviews, setImagePreviews] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const buyerPricePreview = buyerPriceWithFee(price);
 
   function handleImageChange(e) {
     const files = Array.from(e.target.files || []).slice(0, 8);
@@ -313,6 +315,12 @@ function AddItemModal({ collectionId, onClose, onAdded }) {
             </div>
           </div>
 
+          {buyerPricePreview !== null && (
+            <div className="mt-[-4px] text-[11px] text-[#8892a4]">
+              Покупатель заплатит <span className="font-['JetBrains_Mono'] text-[#e8a635]">{formatPrice(buyerPricePreview)}</span> с сервисным сбором 7%.
+            </div>
+          )}
+
           {/* For sale */}
           <label className="flex items-center gap-3 cursor-pointer select-none">
             <div
@@ -349,6 +357,7 @@ function EditItemModal({ item, onClose, onUpdated, onDeleted }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const buyerPricePreview = buyerPriceWithFee(price);
 
   function handleImageChange(e) {
     const files = Array.from(e.target.files || []).slice(0, 8);
@@ -531,6 +540,12 @@ function EditItemModal({ item, onClose, onUpdated, onDeleted }) {
             </div>
             <span className="text-sm text-[#8892a4]">Выставить на продажу</span>
           </label>
+
+          {buyerPricePreview !== null && (
+            <div className="mt-[-4px] text-[11px] text-[#8892a4]">
+              Покупатель заплатит <span className="font-['JetBrains_Mono'] text-[#e8a635]">{formatPrice(buyerPricePreview)}</span> с сервисным сбором 7%.
+            </div>
+          )}
 
           {confirmDelete ? (
             <div className="bg-red-500/[.08] border border-red-500/20 rounded-xl p-4 flex flex-col gap-3">
@@ -904,7 +919,7 @@ function WishlistItemModal({ item, onClose, onUnliked }) {
             <button
               onClick={() => {
                 onClose();
-                window.dispatchEvent(new CustomEvent('open-chat', { detail: { username: item.owner_username, avatar: avatarSrc, itemName: item.name, itemImage: itemCoverUrl(item), itemPrice: item.price, itemId: item.id, sellerIsOther: true } }));
+                window.dispatchEvent(new CustomEvent('open-chat', { detail: { username: item.owner_username, avatar: avatarSrc, itemName: item.name, itemImage: itemCoverUrl(item), itemPrice: item.seller_price ?? item.price, itemId: item.id, sellerIsOther: true } }));
               }}
               className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-white/[.04] hover:bg-white/[.07] text-sm text-[#8892a4] hover:text-[#e8eaf0] transition-colors"
             >
@@ -1107,6 +1122,10 @@ function ArchiveChatModal({ deal, onClose, onDelete }) {
   const [messages, setMessages] = useState([]);
   const [deleting, setDeleting] = useState(false);
   const supportCode = deal.support_code || `CHAT-${deal.id}`;
+  const isSeller = deal.viewer_role === 'seller';
+  const archivePrice = isSeller
+    ? (deal.seller_price ?? deal.price)
+    : (deal.buyer_price ?? deal.price);
 
   useEffect(() => {
     getMessages(deal.id).then(data => {
@@ -1125,7 +1144,7 @@ function ArchiveChatModal({ deal, onClose, onDelete }) {
           <div>
             <p className="text-sm font-semibold text-[#e8eaf0]">{deal.subject || 'Предмет'}</p>
             <p className="text-xs text-[#8892a4]">
-              {deal.other_participant?.username} · {Number(deal.price).toLocaleString('ru-RU')} ₽
+              {deal.other_participant?.username} · {Number(archivePrice).toLocaleString('ru-RU')} ₽
             </p>
             <button
               type="button"
@@ -1211,6 +1230,9 @@ function DealsTab() {
         {deals.map(deal => {
           const img = mediaUrl(deal.item_image);
           const isSeller = deal.viewer_role === 'seller';
+          const dealPrice = isSeller
+            ? (deal.seller_price ?? deal.price)
+            : (deal.buyer_price ?? deal.price);
           const date = new Date(deal.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
 
           return (
@@ -1234,7 +1256,7 @@ function DealsTab() {
               </div>
               <div className="shrink-0 text-right">
                 <p className="text-sm font-semibold text-[#e8eaf0]">
-                  {isSeller ? '+' : '−'}{Number(deal.price).toLocaleString('ru-RU')} ₽
+                  {isSeller ? '+' : '−'}{Number(dealPrice).toLocaleString('ru-RU')} ₽
                 </p>
                 {isSeller && deal.rating != null && (
                   <span className="text-[#e8a635] text-sm">

@@ -65,7 +65,13 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
         setChatData(data);
       }
     }).catch(() => {});
-  }, [activeChat?.username, activeChat?.itemName]);
+  }, [
+    activeChat?.username,
+    activeChat?.itemName,
+    activeChat?.itemPrice,
+    activeChat?.itemId,
+    activeChat?.sellerIsOther,
+  ]);
 
   // Первичная загрузка сообщений (HTTP) + подписка на WebSocket для пушей.
   // WebSocket дешевле и быстрее polling-а 3с; если ws оборвался — useChatSocket
@@ -99,6 +105,29 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
       markReadRef.current?.();
     } else if (event.type === 'chat.updated' && event.chat) {
       setChatData(event.chat);
+    } else if (event.type === 'chat.price_updated' && event.chat_id) {
+      setChatData(prev => (
+        prev?.id === event.chat_id
+          ? {
+              ...prev,
+              price: event.price,
+              seller_price: event.seller_price ?? event.price,
+              buyer_price: event.buyer_price,
+              service_fee_amount: event.service_fee_amount,
+            }
+          : prev
+      ));
+      setChats(prev => prev.map(chat => (
+        chat.id === event.chat_id
+          ? {
+              ...chat,
+              price: event.price,
+              seller_price: event.seller_price ?? event.price,
+              buyer_price: event.buyer_price,
+              service_fee_amount: event.service_fee_amount,
+            }
+          : chat
+      )));
     }
   }, [onMessagesRead, user?.id]);
 
@@ -175,6 +204,9 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
   }, [size.w]);
 
   const supportCode = chatData?.support_code || (chatId ? `CHAT-${chatId}` : '');
+  const sellerPrice = chatData?.seller_price ?? chatData?.price;
+  const buyerPrice = chatData?.buyer_price ?? chatData?.price;
+  const serviceFee = chatData?.service_fee_amount ?? null;
 
   return (
     <div
@@ -290,26 +322,35 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
               {chatData.viewer_role === 'seller' && chatData.status === 'pending' && (
                 <button disabled={agreeing} onClick={async () => {
                   setAgreeing(true);
-                  try { const u = await agreeChatSale(chatId); if (u?.status) setChatData(u); } catch {}
+                  try {
+                    const u = await agreeChatSale(chatId);
+                    if (u?.status) setChatData(u);
+                    else if (u?.detail) alert(u.detail);
+                  } catch {}
                   setAgreeing(false);
                 }} className="w-full py-2 rounded-xl bg-[#e8a635] text-[#0a0e17] text-sm font-semibold disabled:opacity-50">
-                  Согласен продать за {Number(chatData.price).toLocaleString('ru-RU')} ₽
+                  Согласен продать за {Number(sellerPrice).toLocaleString('ru-RU')} ₽
                 </button>
               )}
 
               {/* Покупатель: оплатить */}
               {chatData.viewer_role === 'buyer' && chatData.status === 'seller_agreed' && (
-                <button disabled={agreeing} onClick={async () => {
-                  setAgreeing(true);
-                  try {
-                    const res = await payChatFromBalance(chatId);
-                    if (res?.status) { setChatData(res); window.dispatchEvent(new CustomEvent('balance-updated')); }
-                    else if (res?.detail) alert(res.detail);
-                  } catch {}
-                  setAgreeing(false);
-                }} className="w-full py-2 rounded-xl bg-[#e8a635] text-[#0a0e17] text-sm font-semibold disabled:opacity-50">
-                  Оплатить {Number(chatData.price).toLocaleString('ru-RU')} ₽
-                </button>
+                <div className="flex flex-col gap-1">
+                  <button disabled={agreeing} onClick={async () => {
+                    setAgreeing(true);
+                    try {
+                      const res = await payChatFromBalance(chatId);
+                      if (res?.status) { setChatData(res); window.dispatchEvent(new CustomEvent('balance-updated')); }
+                      else if (res?.detail) alert(res.detail);
+                    } catch {}
+                    setAgreeing(false);
+                  }} className="w-full py-2 rounded-xl bg-[#e8a635] text-[#0a0e17] text-sm font-semibold disabled:opacity-50">
+                    Оплатить {Number(buyerPrice).toLocaleString('ru-RU')} ₽
+                  </button>
+                  <div className="text-[10px] text-[#4a5568] text-center">
+                    Цена продавца {Number(sellerPrice).toLocaleString('ru-RU')} ₽ · сервисный сбор {Number(serviceFee || 0).toLocaleString('ru-RU')} ₽
+                  </div>
+                </div>
               )}
 
               {/* Покупатель ожидает отправки */}
@@ -367,7 +408,7 @@ function ChatWindow({ pos, size, setPos, setSize, onClose, activeChat, setActive
                     } catch {}
                     setAgreeing(false);
                   }} className="w-full py-2 rounded-xl bg-[#e8a635] text-[#0a0e17] text-sm font-semibold disabled:opacity-50">
-                    Я получил товар · перевести {Number(chatData.price).toLocaleString('ru-RU')} ₽ продавцу
+                    Я получил товар · перевести {Number(sellerPrice).toLocaleString('ru-RU')} ₽ продавцу
                   </button>
                   <p className="text-[10px] text-[#4a5568] text-center leading-relaxed">
                     Деньги в эскроу до подтверждения. Если посылка не пришла — обратитесь в поддержку.

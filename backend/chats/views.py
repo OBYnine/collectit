@@ -10,6 +10,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 import logging
+import re
+
+from collectit.pricing import buyer_amount, service_fee_amount
 
 from .models import Chat, Deal, Message
 from .realtime import broadcast_chat_unread_count, chat_unread_count, notify_chat_message, notify_user
@@ -18,6 +21,22 @@ from .serializers import ChatSerializer, MessageSerializer
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
+
+
+def _cdek_phone(user):
+    raw = (getattr(user, "phone", "") or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 10:
+        digits = f"7{digits}"
+    elif len(digits) == 11 and digits.startswith("8"):
+        digits = f"7{digits[1:]}"
+    if len(digits) < 10:
+        return ""
+    return f"+{digits}"
+
+
+def _has_phone(user):
+    return bool(_cdek_phone(user))
 
 
 def _create_cdek_order(chat, buyer, seller):
@@ -30,6 +49,8 @@ def _create_cdek_order(chat, buyer, seller):
 
     token = _get_cdek_token()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    if not _has_phone(seller) or not _has_phone(buyer):
+        raise ValueError("Для создания заказа СДЭК у продавца и покупателя должны быть заполнены телефоны.")
 
     payload = {
         "tariff_code": 136,  # ПВЗ → ПВЗ
@@ -37,11 +58,11 @@ def _create_cdek_order(chat, buyer, seller):
         "delivery_point": buyer.delivery_point_code,
         "sender": {
             "name": seller.username,
-            "phones": [{"number": seller.phone or "+79001234567"}],
+            "phones": [{"number": _cdek_phone(seller)}],
         },
         "recipient": {
             "name": buyer.username,
-            "phones": [{"number": buyer.phone or "+79001234567"}],
+            "phones": [{"number": _cdek_phone(buyer)}],
         },
         "packages": [{
             "number": "1",
@@ -158,6 +179,13 @@ def _exclude_deleted_for_user(queryset, user):
     )
 
 
+def _sync_sale_quotes(chats):
+    synced = list(chats)
+    for chat in synced:
+        chat.sync_price_from_item()
+    return synced
+
+
 def _is_archived_for(chat, user):
     """Чат перешёл в архив (Сделки) для данного пользователя."""
     if chat.seller_id == user.id:
@@ -190,9 +218,11 @@ def chat_list(request):
                 Chat.objects.filter(participants=request.user).exclude(status=Chat.STATUS_COMPLETED),
                 request.user,
             )
+            .select_related("item", "item__owner", "seller")
             .prefetch_related("participants", "messages")
             .order_by("-created_at")
         )
+        all_chats = _sync_sale_quotes(all_chats)
         # Исключаем чаты, которые пользователь уже отправил в архив
         return Response(ChatSerializer(all_chats, many=True, context={"request": request}).data)
 
@@ -259,7 +289,12 @@ def unread_count(request):
 @permission_classes([IsAuthenticated])
 def message_list(request, chat_id):
     try:
-        chat = Chat.objects.filter(participants=request.user).get(pk=chat_id)
+        chat = (
+            Chat.objects
+            .select_related("item", "item__owner", "seller")
+            .filter(participants=request.user)
+            .get(pk=chat_id)
+        )
     except Chat.DoesNotExist:
         return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
     if chat.is_deleted_for(request.user):
@@ -267,6 +302,7 @@ def message_list(request, chat_id):
 
     # Проверяем авто-прибытие при каждом опросе
     chat = _check_and_arrive(chat)
+    chat.sync_price_from_item()
 
     if request.method == "GET":
         read_count = chat.messages.exclude(sender=request.user).filter(is_read=False).update(is_read=True)
@@ -322,20 +358,27 @@ def hide_chat(request, chat_id):
 def chat_agree(request, chat_id):
     """Продавец соглашается на сделку → уведомляет покупателя."""
     try:
-        chat = Chat.objects.filter(participants=request.user, seller=request.user).get(pk=chat_id)
+        chat = (
+            Chat.objects
+            .select_related("item", "item__owner", "seller")
+            .filter(participants=request.user, seller=request.user)
+            .get(pk=chat_id)
+        )
     except Chat.DoesNotExist:
         return Response({"detail": "Not found or you are not the seller"}, status=status.HTTP_404_NOT_FOUND)
 
     if chat.status != Chat.STATUS_PENDING:
         return Response({"detail": "Already agreed"}, status=status.HTTP_400_BAD_REQUEST)
+    if not _has_phone(request.user):
+        return Response(
+            {"detail": "Укажите номер телефона в настройках профиля перед согласием на сделку. Он нужен для оформления доставки СДЭК."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     # Синхронизируем цену с актуальной ценой предмета
-    chat = Chat.objects.select_related("item").get(pk=chat_id)
-    if chat.item and chat.item.price is not None:
-        chat.price = chat.item.price
-
+    chat.sync_price_from_item()
     chat.status = Chat.STATUS_AGREED
-    chat.save(update_fields=["status", "price"])
+    chat.save(update_fields=["status"])
     Deal.sync_from_chat(chat)
 
     buyer = chat.participants.exclude(pk=request.user.pk).first()
@@ -358,7 +401,12 @@ def chat_pay(request, chat_id):
     from accounts.models import Transaction
 
     try:
-        chat = Chat.objects.select_related("seller").filter(participants=request.user).get(pk=chat_id)
+        chat = (
+            Chat.objects
+            .select_related("seller", "item", "item__owner")
+            .filter(participants=request.user)
+            .get(pk=chat_id)
+        )
     except Chat.DoesNotExist:
         return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -366,16 +414,34 @@ def chat_pay(request, chat_id):
         return Response({"detail": "Seller cannot pay"}, status=status.HTTP_400_BAD_REQUEST)
     if chat.status != Chat.STATUS_AGREED:
         return Response({"detail": "Seller has not agreed yet"}, status=status.HTTP_400_BAD_REQUEST)
+    chat.sync_price_from_item()
     if chat.price is None:
         return Response({"detail": "No price set"}, status=status.HTTP_400_BAD_REQUEST)
 
     buyer = request.user
     seller = chat.seller
+    buyer_total = buyer_amount(chat.price)
+
+    if not _has_phone(buyer):
+        return Response(
+            {"detail": "Укажите номер телефона в настройках профиля перед оплатой. Он нужен для оформления доставки СДЭК."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not seller:
+        return Response(
+            {"detail": "Продавец не найден для этой сделки."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not _has_phone(seller):
+        return Response(
+            {"detail": "Продавец не указал номер телефона. Попросите его заполнить телефон в настройках профиля перед сделкой."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     # Предварительная проверка (даёт лучший UX-ответ) — но не гарантирует атомарность, её даст UPDATE ниже.
-    if buyer.balance < chat.price:
+    if buyer.balance < buyer_total:
         return Response(
-            {"detail": f"Недостаточно средств. Баланс: {buyer.balance} ₽, нужно: {chat.price} ₽."},
+            {"detail": f"Недостаточно средств. Баланс: {buyer.balance} ₽, нужно: {buyer_total} ₽."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -384,7 +450,7 @@ def chat_pay(request, chat_id):
             {"detail": "Укажите пункт выдачи СДЭК в настройках профиля перед оплатой."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    if not seller or not seller.delivery_point_code:
+    if not seller.delivery_point_code:
         return Response(
             {"detail": "Продавец не указал свой пункт выдачи СДЭК. Попросите его заполнить настройки доставки."},
             status=status.HTTP_400_BAD_REQUEST,
@@ -407,8 +473,13 @@ def chat_pay(request, chat_id):
             return Response({"detail": "Оплата уже произведена."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Атомарное списание: update срабатывает только если баланс >= price.
-        affected = User.objects.filter(pk=buyer.pk, balance__gte=locked_chat.price).update(
-            balance=F("balance") - locked_chat.price
+        locked_chat.sync_price_from_item()
+        if locked_chat.price is None:
+            return Response({"detail": "No price set"}, status=status.HTTP_400_BAD_REQUEST)
+        locked_fee_amount = service_fee_amount(locked_chat.price)
+        locked_buyer_total = buyer_amount(locked_chat.price)
+        affected = User.objects.filter(pk=buyer.pk, balance__gte=locked_buyer_total).update(
+            balance=F("balance") - locked_buyer_total
         )
         if not affected:
             return Response(
@@ -419,7 +490,7 @@ def chat_pay(request, chat_id):
         Transaction.objects.create(
             user=buyer,
             kind=Transaction.EXPENSE,
-            amount=locked_chat.price,
+            amount=locked_buyer_total,
             description=f"Оплата (эскроу): {locked_chat.subject or 'предмет'}",
         )
         locked_chat.status = Chat.STATUS_PAID
@@ -434,7 +505,11 @@ def chat_pay(request, chat_id):
             amount=locked_chat.price,
         )
         if deal:
-            deal.mark_held(locked_chat.price)
+            deal.mark_held(
+                locked_chat.price,
+                buyer_total=locked_buyer_total,
+                service_fee=locked_fee_amount,
+            )
         chat = locked_chat
 
     # Обновляем объект buyer, чтобы вернуть актуальный баланс
@@ -618,7 +693,11 @@ def chat_confirm_receipt(request, chat_id):
             amount=locked.price,
         )
         if deal and deal.escrow_status == Deal.ESCROW_NOT_HELD and locked.price:
-            deal.mark_held(locked.price)
+            deal.mark_held(
+                locked.price,
+                buyer_total=buyer_amount(locked.price),
+                service_fee=service_fee_amount(locked.price),
+            )
         if deal:
             credited, _message = deal.release_to_seller(
                 reason="Продажа",

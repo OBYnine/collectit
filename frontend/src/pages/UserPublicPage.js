@@ -62,6 +62,7 @@ function ItemModal({ item, liked, onToggleLike, onClose }) {
             <div className="mb-6">
               <div className="text-[10px] text-[#4a5568] uppercase tracking-wider mb-0.5">Цена</div>
               <div className="font-['JetBrains_Mono'] text-[#e8a635] font-bold text-base">{Number(item.price).toLocaleString('ru-RU')} ₽</div>
+              <div className="mt-1 text-[11px] text-[#4a5568]">Сервисный сбор 7% включён.</div>
             </div>
           )}
         </div>

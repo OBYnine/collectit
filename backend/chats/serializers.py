@@ -2,6 +2,8 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
+from collectit.pricing import buyer_amount, service_fee_amount
+
 from .models import Chat, Message
 
 User = get_user_model()
@@ -44,11 +46,15 @@ class ChatSerializer(serializers.ModelSerializer):
     support_code = serializers.SerializerMethodField()
     held_amount = serializers.SerializerMethodField()
     escrow_status = serializers.SerializerMethodField()
+    seller_price = serializers.SerializerMethodField()
+    buyer_price = serializers.SerializerMethodField()
+    service_fee_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = Chat
         fields = [
-            "id", "subject", "item_image", "price", "status", "seller_id",
+            "id", "subject", "item_image", "price", "seller_price",
+            "buyer_price", "service_fee_amount", "status", "seller_id",
             "track_number", "cdek_uuid", "shipped_at",
             "rating", "buyer_confirmed", "seller_confirmed",
             "deal_id", "deal_public_id", "support_code", "held_amount", "escrow_status",
@@ -100,6 +106,23 @@ class ChatSerializer(serializers.ModelSerializer):
     def get_escrow_status(self, obj):
         deal = self._get_deal(obj)
         return deal.escrow_status if deal else "not_held"
+
+    def get_seller_price(self, obj):
+        return str(obj.price) if obj.price is not None else None
+
+    def get_buyer_price(self, obj):
+        deal = self._get_deal(obj)
+        if deal and deal.buyer_amount > 0:
+            return str(deal.buyer_amount)
+        amount = buyer_amount(obj.price)
+        return str(amount) if amount is not None else None
+
+    def get_service_fee_amount(self, obj):
+        deal = self._get_deal(obj)
+        if deal and deal.service_fee_amount > 0:
+            return str(deal.service_fee_amount)
+        amount = service_fee_amount(obj.price)
+        return str(amount) if amount is not None else None
 
     def _get_deal(self, obj):
         try:

@@ -71,6 +71,8 @@ class DealAdmin(admin.ModelAdmin):
         "buyer",
         "seller",
         "amount",
+        "service_fee_amount",
+        "buyer_amount",
         "held_amount",
         "escrow_status",
         "status",
@@ -95,6 +97,8 @@ class DealAdmin(admin.ModelAdmin):
         "subject",
         "item_image",
         "amount",
+        "service_fee_amount",
+        "buyer_amount",
         "currency",
         "status",
         "escrow_status",
@@ -142,7 +146,7 @@ class DealAdmin(admin.ModelAdmin):
         }),
         ("Деньги", {
             "fields": (
-                "amount", "currency", "escrow_status", "held_amount",
+                "amount", "service_fee_amount", "buyer_amount", "currency", "escrow_status", "held_amount",
                 "paid_at", "released_at", "refunded_at", "released_by", "refunded_by",
             ),
         }),

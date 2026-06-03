@@ -2,12 +2,15 @@ import hashlib
 import random
 import string
 import uuid
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
 from django.db import transaction as db_transaction
 from django.db.models import F
 from django.utils import timezone
+
+from collectit.pricing import buyer_amount, money, service_fee_amount
 
 
 def _gen_track():
@@ -23,6 +26,7 @@ class Chat(models.Model):
     STATUS_SHIPPED   = 'shipped'
     STATUS_ARRIVED   = 'arrived'
     STATUS_COMPLETED = 'completed'
+    PRICE_SYNC_STATUSES = (STATUS_PENDING, STATUS_AGREED)
     STATUS_CHOICES   = [
         (STATUS_PENDING,   'Ожидание согласия'),
         (STATUS_AGREED,    'Продавец согласен'),
@@ -107,16 +111,113 @@ class Chat(models.Model):
             created = True
         if created:
             chat.participants.add(user_a, user_b)
-        if seller and price is not None:
-            buyer = user_b if seller.pk == user_a.pk else user_a
-            Deal.ensure_for_chat(
-                chat,
-                buyer=buyer,
+        if seller and (price is not None or item is not None):
+            chat.set_sale_quote(
+                price,
                 seller=seller,
                 item=item,
+                item_image=item_image,
+            )
+            if price is not None:
+                buyer = user_b if seller.pk == user_a.pk else user_a
+                Deal.ensure_for_chat(
+                    chat,
+                    buyer=buyer,
+                    seller=seller,
+                    item=item,
+                    amount=price,
+                )
+        return chat, created
+
+    def is_sale_quote_mutable(self):
+        if self.status not in self.PRICE_SYNC_STATUSES:
+            return False
+        try:
+            deal = self.deal
+        except Deal.DoesNotExist:
+            return True
+        return deal.escrow_status == Deal.ESCROW_NOT_HELD and deal.held_amount == 0
+
+    def set_sale_quote(self, price, *, seller=None, item=None, item_image=None,
+                       save=True, sync_deal=True):
+        if not self.is_sale_quote_mutable():
+            return False
+
+        update_fields = []
+        if seller is not None and self.seller_id != seller.pk:
+            self.seller = seller
+            update_fields.append("seller")
+        if item is not None and self.item_id != item.pk:
+            self.item = item
+            update_fields.append("item")
+        if item_image is not None and self.item_image != item_image:
+            self.item_image = item_image
+            update_fields.append("item_image")
+        if price is None:
+            if self.price is not None:
+                self.price = None
+                update_fields.append("price")
+
+            changed = bool(update_fields)
+            if save and changed:
+                self.save(update_fields=update_fields)
+
+            if sync_deal:
+                try:
+                    deal = self.deal
+                except Deal.DoesNotExist:
+                    deal = None
+                if (
+                    deal
+                    and deal.escrow_status == Deal.ESCROW_NOT_HELD
+                    and deal.held_amount == 0
+                    and (
+                        deal.amount != Decimal("0.00")
+                        or deal.buyer_amount != Decimal("0.00")
+                        or deal.service_fee_amount != Decimal("0.00")
+                    )
+                ):
+                    deal.amount = Decimal("0.00")
+                    deal.buyer_amount = Decimal("0.00")
+                    deal.service_fee_amount = Decimal("0.00")
+                    deal.save(update_fields=[
+                        "amount",
+                        "buyer_amount",
+                        "service_fee_amount",
+                        "updated_at",
+                    ])
+            return changed
+
+        if self.price != price:
+            self.price = price
+            update_fields.append("price")
+
+        changed = bool(update_fields)
+        if save and changed:
+            self.save(update_fields=update_fields)
+
+        if sync_deal and self.seller_id:
+            buyer = self.participants.exclude(pk=self.seller_id).first()
+            Deal.ensure_for_chat(
+                self,
+                buyer=buyer,
+                seller=seller or self.seller,
+                item=item or self.item,
                 amount=price,
             )
-        return chat, created
+        return changed
+
+    def sync_price_from_item(self, *, save=True, sync_deal=True):
+        if not self.item_id:
+            return False
+        item = self.item
+        return self.set_sale_quote(
+            item.price,
+            seller=item.owner,
+            item=item,
+            save=save,
+            sync_deal=sync_deal,
+        )
 
     def maybe_arrive(self):
         """Если посылка отправлена > 60 сек назад — переводим в arrived."""
@@ -203,6 +304,8 @@ class Deal(models.Model):
     subject = models.CharField(max_length=500, blank=True)
     item_image = models.CharField(max_length=1000, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    buyer_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    service_fee_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     currency = models.CharField(max_length=3, default="RUB")
     status = models.CharField(max_length=20, choices=Chat.STATUS_CHOICES, default=Chat.STATUS_PENDING)
     escrow_status = models.CharField(
@@ -251,6 +354,9 @@ class Deal(models.Model):
         amount = amount if amount is not None else chat.price
         if amount is None:
             return None
+        amount = money(amount)
+        fee_amount = service_fee_amount(amount)
+        total_amount = buyer_amount(amount)
 
         deal, _ = cls.objects.get_or_create(
             chat=chat,
@@ -261,6 +367,8 @@ class Deal(models.Model):
                 "subject": chat.subject,
                 "item_image": chat.item_image,
                 "amount": amount,
+                "buyer_amount": total_amount,
+                "service_fee_amount": fee_amount,
                 "status": chat.status,
             },
         )
@@ -272,9 +380,12 @@ class Deal(models.Model):
             "item": item or chat.item or deal.item,
             "subject": chat.subject,
             "item_image": chat.item_image,
-            "amount": amount,
             "status": chat.status,
         }
+        if deal.escrow_status == cls.ESCROW_NOT_HELD and deal.held_amount == 0:
+            updates["amount"] = amount
+            updates["buyer_amount"] = total_amount
+            updates["service_fee_amount"] = fee_amount
         for field, value in updates.items():
             if value is not None and getattr(deal, field) != value:
                 setattr(deal, field, value)
@@ -286,31 +397,32 @@ class Deal(models.Model):
 
     @classmethod
     def sync_from_chat(cls, chat):
-        try:
-            deal = chat.deal
-        except cls.DoesNotExist:
-            deal = None
-        if not deal:
-            deal = cls.ensure_for_chat(
-                chat,
-                seller=chat.seller,
-                item=chat.item,
-                amount=chat.price,
-            )
-        if deal and deal.status != chat.status:
-            deal.status = chat.status
-            deal.save(update_fields=["status", "updated_at"])
-        return deal
+        return cls.ensure_for_chat(
+            chat,
+            seller=chat.seller,
+            item=chat.item,
+            amount=chat.price,
+        )
 
-    def mark_held(self, amount=None):
-        amount = amount if amount is not None else self.amount
+    def mark_held(self, amount=None, buyer_total=None, service_fee=None):
+        amount = money(amount if amount is not None else self.amount)
+        service_fee = money(
+            service_fee if service_fee is not None else service_fee_amount(amount)
+        )
+        buyer_total = money(
+            buyer_total if buyer_total is not None else amount + service_fee
+        )
         self.held_amount = amount
         self.amount = amount
+        self.buyer_amount = buyer_total
+        self.service_fee_amount = service_fee
         self.escrow_status = self.ESCROW_HELD
         self.paid_at = self.paid_at or timezone.now()
         self.save(update_fields=[
             "held_amount",
             "amount",
+            "buyer_amount",
+            "service_fee_amount",
             "escrow_status",
             "paid_at",
             "updated_at",
@@ -330,6 +442,10 @@ class Deal(models.Model):
             and self.buyer_id is not None
         )
 
+    @property
+    def refund_amount(self):
+        return self.buyer_amount if self.buyer_amount > 0 else self.held_amount
+
     def refund_to_buyer(self, actor=None, reason="Возврат удержанных средств покупателю"):
         from accounts.models import Transaction
         from django.contrib.auth import get_user_model
@@ -339,7 +455,7 @@ class Deal(models.Model):
             if not deal.can_refund_to_buyer():
                 return False, "Нет удержанных средств для возврата покупателю."
 
-            amount = deal.held_amount
+            amount = deal.refund_amount
             UserModel = get_user_model()
             UserModel.objects.filter(pk=deal.buyer_id).update(balance=F("balance") + amount)
             Transaction.objects.create(

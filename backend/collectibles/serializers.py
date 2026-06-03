@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from collectit.pricing import buyer_amount, service_fee_amount
 from .models import Collection, Item, ItemImage, WishlistItem
 
 
@@ -17,6 +18,9 @@ class ItemSerializer(serializers.ModelSerializer):
     owner_bio = serializers.CharField(source="owner.bio", read_only=True)
     images = ItemImageSerializer(many=True, read_only=True)
     is_liked = serializers.SerializerMethodField()
+    seller_price = serializers.SerializerMethodField()
+    buyer_price = serializers.SerializerMethodField()
+    service_fee_amount = serializers.SerializerMethodField()
 
     def get_is_liked(self, obj):
         request = self.context.get("request")
@@ -35,7 +39,8 @@ class ItemSerializer(serializers.ModelSerializer):
         model = Item
         fields = [
             "id", "name", "description",
-            "price", "currency", "is_for_sale",
+            "price", "seller_price", "buyer_price", "service_fee_amount",
+            "currency", "is_for_sale",
             "image", "images",
             "collection", "owner", "owner_username", "owner_avatar", "owner_bio",
             "created_at", "updated_at", "is_liked",
@@ -49,6 +54,29 @@ class ItemSerializer(serializers.ModelSerializer):
         if created_images and not item.image:
             self._sync_primary_image(item)
         return item
+
+    def get_seller_price(self, obj):
+        return str(obj.price) if obj.price is not None else None
+
+    def get_buyer_price(self, obj):
+        amount = buyer_amount(obj.price)
+        return str(amount) if amount is not None else None
+
+    def get_service_fee_amount(self, obj):
+        amount = service_fee_amount(obj.price)
+        return str(amount) if amount is not None else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        is_owner = (
+            request
+            and request.user.is_authenticated
+            and instance.owner_id == request.user.id
+        )
+        if not is_owner:
+            data["price"] = data["buyer_price"]
+        return data
 
     def update(self, instance, validated_data):
         item = super().update(instance, validated_data)
