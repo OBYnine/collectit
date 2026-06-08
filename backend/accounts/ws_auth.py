@@ -1,8 +1,8 @@
 """JWT-аутентификация для WebSocket.
 
-Токен можно передать двумя способами:
-1. ?token=<access> в query string (websocket-клиент в браузере не может ставить заголовки)
-2. Cookie access_token=<...> (если фронт и бэкенд на одном домене)
+Токен читается из Cookie access_token=<...>.
+Legacy query string ?token=<access> отключен по умолчанию, потому что URL
+часто попадает в логи reverse proxy/браузера/мониторинга.
 """
 from urllib.parse import parse_qs
 
@@ -25,9 +25,10 @@ def _get_user(user_id):
 
 
 def _extract_token(scope):
-    qs = parse_qs(scope.get("query_string", b"").decode())
-    if "token" in qs and qs["token"]:
-        return qs["token"][0]
+    if settings.ALLOW_WEBSOCKET_QUERY_TOKEN:
+        qs = parse_qs(scope.get("query_string", b"").decode())
+        if "token" in qs and qs["token"]:
+            return qs["token"][0]
     # cookie fallback
     cookies = {}
     for header_name, header_value in scope.get("headers", []):

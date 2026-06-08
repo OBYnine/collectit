@@ -9,16 +9,20 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const { refreshUser } = useUser();
+  const { refreshUser, setUser } = useUser();
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
-      await refreshUser();
-      navigate('/profile');
+      const data = await login(email, password);
+      const loggedInUser = data?.user?.id ? data.user : await refreshUser();
+      if (!loggedInUser?.id) {
+        throw new Error('Не удалось загрузить профиль после входа. Попробуйте ещё раз.');
+      }
+      setUser(loggedInUser);
+      navigate('/profile', { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {

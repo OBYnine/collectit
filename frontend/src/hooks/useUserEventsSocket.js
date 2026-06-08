@@ -19,9 +19,7 @@ export function useUserEventsSocket(enabled, onEvent) {
     closedRef.current = false;
 
     function connect() {
-      const token = localStorage.getItem('access_token') || '';
-      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-      const ws = new WebSocket(`${WS_BASE}/ws/notifications/${qs}`);
+      const ws = new WebSocket(`${WS_BASE}/ws/notifications/`);
       wsRef.current = ws;
 
       ws.onopen = () => {

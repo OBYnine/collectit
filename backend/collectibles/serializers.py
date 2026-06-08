@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from collectit.pricing import buyer_amount, service_fee_amount
+from collectit.upload_validation import validate_uploaded_image, validate_uploaded_image_list
 from .models import Collection, Item, ItemImage, WishlistItem
 
 
@@ -34,6 +35,9 @@ class ItemSerializer(serializers.ModelSerializer):
             if value.owner_id != request.user.id:
                 raise serializers.ValidationError("Нельзя добавить предмет в чужую коллекцию.")
         return value
+
+    def validate_image(self, value):
+        return validate_uploaded_image(value)
 
     class Meta:
         model = Item
@@ -139,6 +143,7 @@ class ItemSerializer(serializers.ModelSerializer):
         if not files:
             return []
         existing_count = item.images.count()
+        validate_uploaded_image_list(files, existing_count=existing_count)
         created = []
         for index, file_obj in enumerate(files, start=existing_count):
             created.append(ItemImage.objects.create(item=item, image=file_obj, order=index))

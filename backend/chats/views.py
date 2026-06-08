@@ -5,9 +5,10 @@ from django.db import transaction as db_transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 
 import logging
 import re
@@ -21,6 +22,15 @@ from .serializers import ChatSerializer, MessageSerializer
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
+
+
+class ChatMessageThrottle(UserRateThrottle):
+    scope = "chat_message"
+
+    def allow_request(self, request, view):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        return super().allow_request(request, view)
 
 
 def _cdek_phone(user):
@@ -287,6 +297,7 @@ def unread_count(request):
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([ChatMessageThrottle])
 def message_list(request, chat_id):
     try:
         chat = (

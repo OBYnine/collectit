@@ -2,8 +2,10 @@ import json
 
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from collectit.upload_validation import validate_uploaded_image_list
 from .models import Article, ArticleImage
 from .serializers import ArticleListSerializer, ArticleDetailSerializer
 
@@ -48,6 +50,12 @@ class ArticleViewSet(viewsets.ModelViewSet):
         if not title or not content:
             return Response({"detail": "Заголовок и текст обязательны."}, status=status.HTTP_400_BAD_REQUEST)
 
+        files = request.FILES.getlist("images")
+        try:
+            validate_uploaded_image_list(files)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
         excerpt = content[:300] + ("…" if len(content) > 300 else "")
         article = Article.objects.create(
             title=title,
@@ -58,7 +66,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
             published_at=timezone.now(),
         )
 
-        for i, img in enumerate(request.FILES.getlist("images")):
+        for i, img in enumerate(files):
             ArticleImage.objects.create(article=article, image=img, order=i)
 
         return Response(ArticleListSerializer(article).data, status=status.HTTP_201_CREATED)
@@ -73,23 +81,30 @@ class ArticleViewSet(viewsets.ModelViewSet):
         if not title or not content:
             return Response({"detail": "Заголовок и текст обязательны."}, status=status.HTTP_400_BAD_REQUEST)
 
+        raw = request.data.get("remove_image_ids", "[]")
+        try:
+            remove_ids = json.loads(raw)
+        except (ValueError, TypeError):
+            remove_ids = []
+
+        files = request.FILES.getlist("images")
+        existing_count = instance.images.exclude(id__in=remove_ids).count()
+        try:
+            validate_uploaded_image_list(files, existing_count=existing_count)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
         instance.title   = title
         instance.content = content
         instance.excerpt = content[:300] + ("…" if len(content) > 300 else "")
         instance.save()
 
         # Удаляем отмеченные изображения
-        raw = request.data.get("remove_image_ids", "[]")
-        try:
-            remove_ids = json.loads(raw)
-        except (ValueError, TypeError):
-            remove_ids = []
         if remove_ids:
             ArticleImage.objects.filter(article=instance, id__in=remove_ids).delete()
 
         # Добавляем новые изображения
-        existing_count = instance.images.count()
-        for i, img in enumerate(request.FILES.getlist("images")):
+        for i, img in enumerate(files):
             ArticleImage.objects.create(article=instance, image=img, order=existing_count + i)
 
         instance.refresh_from_db()

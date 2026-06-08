@@ -12,6 +12,8 @@ from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.layers import get_channel_layer
+from django.conf import settings
+from django.core.cache import cache
 
 from .models import Chat, Message
 from .realtime import broadcast_chat_unread_count, notify_chat_message
@@ -72,6 +74,12 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             text = (content.get("text") or "").strip()
             if not text:
                 return
+            if await self._is_rate_limited(self.user_id):
+                await self.send_json({
+                    "type": "error",
+                    "detail": "Слишком много сообщений. Подождите немного.",
+                })
+                return
             msg = await self._create_message(self.chat_id, self.user_id, text)
             payload = {
                 "type": "message.created",
@@ -102,6 +110,19 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             return False
         user_ref = type("UserRef", (), {"id": user_id, "is_authenticated": True})()
         return not chat.is_deleted_for(user_ref)
+
+    @database_sync_to_async
+    def _is_rate_limited(self, user_id):
+        limit = max(1, int(getattr(settings, "CHAT_MESSAGE_RATE_LIMIT_PER_MINUTE", 120)))
+        key = f"chat-message-rate:{user_id}"
+        if cache.add(key, 1, timeout=60):
+            return False
+        try:
+            count = cache.incr(key)
+        except ValueError:
+            cache.set(key, 1, timeout=60)
+            return False
+        return count > limit
 
     @database_sync_to_async
     def _create_message(self, chat_id, sender_id, text):

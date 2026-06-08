@@ -2,9 +2,6 @@
  * API client for CollectIt backend.
  *
  * Авторизация — через httpOnly cookie (access_token / refresh_token).
- * Старый localStorage-механизм оставлен ТОЛЬКО для миграции существующих сессий
- * (если пользователь уже залогинен старым способом, токен ещё работает),
- * новые логины кладут токен в cookie.
  */
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
@@ -12,26 +9,37 @@ const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
 // --- Auth state (флаг "залогинен", не сам токен) ---
 const AUTH_FLAG = "collecta_authed";
 
-// Старые ключи (пробуем мигрировать наружу).
+// Старые ключи: чистим их после логина/логаута, но не используем для auth.
 const LEGACY_ACCESS = "access_token";
 const LEGACY_REFRESH = "refresh_token";
+const CSRF_COOKIE = "csrftoken";
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-let accessToken = localStorage.getItem(LEGACY_ACCESS); // legacy, скоро убираем
-let refreshToken = localStorage.getItem(LEGACY_REFRESH);
+function getCookie(name) {
+  const prefix = `${name}=`;
+  return document.cookie
+    .split(";")
+    .map(part => part.trim())
+    .find(part => part.startsWith(prefix))
+    ?.slice(prefix.length) || "";
+}
+
+function addCsrfHeader(headers, method = "GET") {
+  if (!UNSAFE_METHODS.has(String(method).toUpperCase())) return headers;
+  if (headers["X-CSRFToken"] || headers["x-csrftoken"]) return headers;
+  const token = getCookie(CSRF_COOKIE);
+  if (token) headers["X-CSRFToken"] = decodeURIComponent(token);
+  return headers;
+}
 
 export function setTokens(access, refresh) {
-  // Legacy совместимость: токены в localStorage. Новый login() их не использует,
-  // но если кто-то ещё дёргает старое API — пусть работает.
-  accessToken = access;
-  refreshToken = refresh;
-  if (access)  localStorage.setItem(LEGACY_ACCESS, access);
-  if (refresh) localStorage.setItem(LEGACY_REFRESH, refresh);
+  // Совместимость со старыми вызовами: реальные JWT больше не храним в JS.
+  localStorage.removeItem(LEGACY_ACCESS);
+  localStorage.removeItem(LEGACY_REFRESH);
   localStorage.setItem(AUTH_FLAG, "1");
 }
 
 export function clearTokens() {
-  accessToken = null;
-  refreshToken = null;
   localStorage.removeItem(LEGACY_ACCESS);
   localStorage.removeItem(LEGACY_REFRESH);
   localStorage.removeItem(AUTH_FLAG);
@@ -39,7 +47,7 @@ export function clearTokens() {
 
 export function isAuthenticated() {
   // Куку прочитать из JS нельзя (httpOnly), поэтому держим отдельный публичный флаг.
-  return !!accessToken || localStorage.getItem(AUTH_FLAG) === "1";
+  return localStorage.getItem(AUTH_FLAG) === "1";
 }
 
 export async function logout() {
@@ -47,6 +55,7 @@ export async function logout() {
   try {
     await fetch(`${API_BASE}/accounts/cookie-logout/`, {
       method: "POST",
+      headers: addCsrfHeader({}, "POST"),
       credentials: "include",
     });
   } catch {}
@@ -61,39 +70,22 @@ async function apiFetch(endpoint, options = {}) {
     ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...options.headers,
   };
-
-  // Legacy-режим: если у пользователя ещё лежит токен в localStorage — отправим его.
-  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+  addCsrfHeader(headers, options.method || "GET");
 
   // credentials: 'include' — чтобы браузер посылал httpOnly-cookies.
   let response = await fetch(url, { ...options, headers, credentials: "include" });
 
-  // Auto-refresh on 401: сначала пробуем cookie-refresh (новый), затем legacy.
+  // Auto-refresh on 401 через httpOnly refresh-cookie.
   if (response.status === 401) {
     let refreshed = false;
     try {
       const r = await fetch(`${API_BASE}/accounts/cookie-refresh/`, {
-        method: "POST", credentials: "include",
+        method: "POST",
+        headers: addCsrfHeader({}, "POST"),
+        credentials: "include",
       });
       if (r.ok) refreshed = true;
     } catch {}
-
-    if (!refreshed && refreshToken) {
-      // Legacy fallback
-      try {
-        const refreshRes = await fetch(`${API_BASE}/auth/token/refresh/`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh: refreshToken }),
-        });
-        if (refreshRes.ok) {
-          const data = await refreshRes.json();
-          setTokens(data.access, refreshToken);
-          headers["Authorization"] = `Bearer ${data.access}`;
-          refreshed = true;
-        }
-      } catch {}
-    }
 
     if (refreshed) {
       response = await fetch(url, { ...options, headers, credentials: "include" });
@@ -113,7 +105,7 @@ export async function login(email, password) {
   try {
     res = await fetch(`${API_BASE}/accounts/cookie-login/`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: addCsrfHeader({ "Content-Type": "application/json" }, "POST"),
       credentials: "include",
       body: JSON.stringify({ email, password }),
     });
@@ -127,15 +119,14 @@ export async function login(email, password) {
   // Чистим legacy-токены — теперь не нужны.
   localStorage.removeItem(LEGACY_ACCESS);
   localStorage.removeItem(LEGACY_REFRESH);
-  accessToken = null;
-  refreshToken = null;
   return data;
 }
 
 export async function register(username, email, password, passwordConfirm) {
   const res = await fetch(`${API_BASE}/accounts/register/`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: addCsrfHeader({ "Content-Type": "application/json" }, "POST"),
+    credentials: "include",
     body: JSON.stringify({
       username,
       email,
@@ -165,6 +156,7 @@ export async function verifyEmail(token) {
 // --- Profile ---
 export async function getMe() {
   const res = await apiFetch("/accounts/me/");
+  if (!res) return null;
   return res.json();
 }
 
@@ -386,6 +378,19 @@ export async function markAllRead() {
 // --- Balance ---
 export async function getTransactions() {
   const res = await apiFetch("/accounts/transactions/");
+  return res.json();
+}
+
+export async function getWithdrawals() {
+  const res = await apiFetch("/accounts/withdrawals/");
+  return res.json();
+}
+
+export async function createWithdrawal(data) {
+  const res = await apiFetch("/accounts/withdrawals/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
   return res.json();
 }
 

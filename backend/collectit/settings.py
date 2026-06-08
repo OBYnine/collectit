@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third-party
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
     "channels",
@@ -102,11 +103,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # --- REST Framework ---
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        # CookieJWTAuthentication читает access_token из httpOnly cookie.
-        # Стандартный JWTAuthentication оставлен для обратной совместимости с
-        # клиентами, которые ещё передают токен через Authorization-заголовок.
         "accounts.auth.CookieJWTAuthentication",
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
@@ -130,15 +127,23 @@ REST_FRAMEWORK = {
         "login": "10/minute",
         "register": "5/hour",
         "payment": "10/hour",
+        "support": "30/hour",
+        "chat_message": "120/minute",
     },
 }
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
     # Гарантируем минимум 32 байта для HMAC-SHA256
     "SIGNING_KEY": SECRET_KEY.ljust(32, "k"),
 }
+
+ENABLE_LEGACY_JWT_ENDPOINTS = os.getenv("ENABLE_LEGACY_JWT_ENDPOINTS", "False").lower() in ("true", "1")
+ENABLE_BEARER_JWT_AUTH = os.getenv("ENABLE_BEARER_JWT_AUTH", "False").lower() in ("true", "1")
+ALLOW_WEBSOCKET_QUERY_TOKEN = os.getenv("ALLOW_WEBSOCKET_QUERY_TOKEN", "False").lower() in ("true", "1")
 
 # --- CORS ---
 _cors_env = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
@@ -161,6 +166,19 @@ JWT_COOKIE_SECURE       = os.getenv("JWT_COOKIE_SECURE", "False" if os.getenv("D
 JWT_COOKIE_SAMESITE     = os.getenv("JWT_COOKIE_SAMESITE", "Lax")
 JWT_COOKIE_DOMAIN       = os.getenv("JWT_COOKIE_DOMAIN", "") or None
 
+# --- Upload limits ---
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("DATA_UPLOAD_MAX_MEMORY_SIZE", str(12 * 1024 * 1024)))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("FILE_UPLOAD_MAX_MEMORY_SIZE", str(5 * 1024 * 1024)))
+USER_IMAGE_MAX_BYTES = int(os.getenv("USER_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
+USER_IMAGE_MAX_COUNT = int(os.getenv("USER_IMAGE_MAX_COUNT", "12"))
+USER_IMAGE_ALLOWED_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
+CHAT_MESSAGE_RATE_LIMIT_PER_MINUTE = int(os.getenv("CHAT_MESSAGE_RATE_LIMIT_PER_MINUTE", "120"))
+
 # --- Security headers (активны когда DEBUG=False) ---
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
@@ -177,9 +195,9 @@ if not DEBUG:
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
 
-    CSRF_COOKIE_SECURE = True
-    CSRF_COOKIE_HTTPONLY = True
-    CSRF_COOKIE_SAMESITE = "Lax"
+    CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "True").lower() in ("true", "1")
+    CSRF_COOKIE_HTTPONLY = os.getenv("CSRF_COOKIE_HTTPONLY", "False").lower() in ("true", "1")
+    CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "Lax")
 
 # --- i18n ---
 LANGUAGE_CODE = "ru"
@@ -278,7 +296,15 @@ if REDIS_URL:
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
-            "CONFIG": {"hosts": [REDIS_URL]},
+            "CONFIG": {
+                "hosts": [{
+                    "address": REDIS_URL,
+                    # channels_redis waits up to 5s in BZPOPMIN. Keep the
+                    # socket timeout longer so redis-py does not turn normal
+                    # empty waits into websocket-disconnect exceptions.
+                    "socket_timeout": int(os.getenv("REDIS_SOCKET_TIMEOUT", "10")),
+                }],
+            },
         },
     }
 else:

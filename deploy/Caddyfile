@@ -1,0 +1,8 @@
+{
+	email {$ACME_EMAIL}
+}
+
+collecit.ru, www.collecit.ru, collecit.online, www.collecit.online {
+	encode zstd gzip
+	reverse_proxy frontend:80
+}

@@ -10,7 +10,9 @@
 - **Коллекции и предметы** — CRUD с галереей фотографий, флаг `is_public`, цены, продажа
 - **Эскроу-сделки** — деньги удерживаются до подтверждения покупателем, покупательская цена включает сервисный сбор 7%
 - **ЮKassa** — пополнение баланса (с webhook-защитой от двойного зачисления)
+- **Вывод средств** — ручные заявки на СБП или карту с резервированием суммы на балансе
 - **СДЭК** — реальный API + fallback на демо-точки
+- **Игровой онбординг** — стартовый квест: телефон, ПВЗ СДЭК, первая коллекция и первый предмет
 - **Чат** — WebSocket (Django Channels), HTTP-fallback
 - **Уведомления** — внутри платформы + realtime-события для новых сообщений и счетчиков + email-дублирование
 - **Рейтинги** — отзывы продавцу после сделки
@@ -173,7 +175,22 @@ completed-сделка остается в архиве у покупателя 
 
 **Данные для доставки:** перед согласием продавца и оплатой покупателя у участников должны быть заполнены телефон и пункт выдачи СДЭК. Телефон перед отправкой в СДЭК нормализуется к формату `+7...`; фейковые номера для заказов не используются.
 
+**Вывод средств:** продавец может создать ручную заявку на вывод через СБП или карту. Сумма сразу резервируется с баланса, администратор обрабатывает заявку в Django Admin: берет в обработку, отмечает выплаченной или отклоняет с возвратом средств на баланс. Карточный вывод в этом MVP предназначен для ручной обработки; для продакшена его лучше заменить токенизированными выплатами через платежного провайдера.
+
 В Django Admin у каждой сделки есть отдельная запись `Deal` со своим UUID. В списке сделок показывается текущая сумма удержания, общий итог удержанных средств, кнопка ручного зачисления продавцу и кнопка возврата удержанных средств покупателю для спорных случаев.
+
+---
+
+## Игровой онбординг
+
+После входа пользователь видит стартовый квест, пока не выполнит базовые шаги подготовки аккаунта:
+
+- заполнить номер телефона;
+- выбрать пункт выдачи СДЭК;
+- создать первую коллекцию;
+- добавить первый предмет.
+
+Страница `/onboarding` показывает прогресс, XP и текущий ранг. Небольшой виджет внизу интерфейса ведет к следующей миссии. Когда шаг впервые становится выполненным, он сохраняется в профиле пользователя и больше не откатывается назад: если позже удалить телефон, ПВЗ, предмет или коллекцию, миссия останется завершенной.
 
 ---
 
@@ -187,6 +204,7 @@ completed-сделка остается в архиве у покупателя 
 | POST   | `/api/accounts/cookie-logout/`            | Выход                           |
 | GET    | `/api/accounts/me/`                       | Текущий профиль                 |
 | GET    | `/api/accounts/users/{username}/`         | Публичный профиль               |
+| GET/POST | `/api/accounts/withdrawals/`            | Заявки на вывод средств через СБП/карту |
 | POST   | `/api/accounts/create-payment/`           | Создать платёж ЮKassa           |
 | POST   | `/api/accounts/verify-payment/`           | Проверить платёж ЮKassa и причину отмены |
 | POST   | `/api/accounts/yookassa-webhook/`         | Webhook от ЮKassa (IP-проверка) |
@@ -204,7 +222,8 @@ completed-сделка остается в архиве у покупателя 
 | POST   | `/api/chats/{id}/rate/`                   | Оценка                          |
 | DELETE | `/api/chats/{id}/hide/`                   | Локально удалить чат у текущего пользователя |
 | POST   | `/api/support/tickets/`                   | Создать обращение               |
-| WS     | `ws://host/ws/chats/{id}/?token=...`      | WebSocket чата                  |
+| WS     | `ws://host/ws/chats/{id}/`                | WebSocket чата (auth через httpOnly cookie) |
+| WS     | `ws://host/ws/notifications/`             | WebSocket уведомлений (auth через httpOnly cookie) |
 
 В ответах Chat API есть поле `support_code` вида `CHAT-123`. Пользователь видит его в окне переписки и может отправить администратору; в Django Admin этот код ищется в `Chats` и `Deals`.
 
@@ -272,6 +291,37 @@ docker compose --env-file .env.docker exec backend python manage.py telegram_get
 
 ---
 
+## Деплой на домены
+
+Для `collecit.ru` и `collecit.online` текущий проект нужно разворачивать на VPS или выделенном сервере с Docker daemon и Docker Compose v2. Обычный shared-хостинг с FTP/MySQL не подходит без переработки архитектуры: CollectIT использует PostgreSQL, Redis, Django Channels/WebSocket, Celery worker и Celery beat.
+
+В репозитории есть production-надстройка:
+
+```bash
+docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Она поднимает Caddy на `80/443`, автоматически выпускает HTTPS-сертификаты и проксирует `collecit.ru`, `www.collecit.ru`, `collecit.online`, `www.collecit.online` в frontend/nginx. Перед запуском DNS `A`-записи этих доменов должны указывать на IP VPS.
+
+Минимальные production-переменные:
+
+```env
+DJANGO_DEBUG=False
+DJANGO_ALLOWED_HOSTS=collecit.ru,www.collecit.ru,collecit.online,www.collecit.online
+CORS_ALLOWED_ORIGINS=https://collecit.ru,https://www.collecit.ru,https://collecit.online,https://www.collecit.online
+FRONTEND_URL=https://collecit.ru
+JWT_COOKIE_SECURE=True
+DJANGO_SECURE_SSL_REDIRECT=True
+ENABLE_DEMO_DEPOSIT=False
+FRONTEND_HOST=127.0.0.1
+FRONTEND_PORT=3000
+ACME_EMAIL=admin@collecit.ru
+```
+
+После выкладки секреты, которые попадали в чат или скриншоты, нужно перевыпустить в панели хостинга/провайдеров.
+
+---
+
 ## Тесты
 
 ```powershell
@@ -284,17 +334,20 @@ python manage.py check --deploy
 
 ## Безопасность
 
-- JWT в httpOnly cookie (защита от XSS)
-- Throttling на login (10/мин), register (5/час), payment (10/час)
+- JWT в httpOnly cookie (защита от XSS); refresh-токены ротируются и старые refresh попадают в blacklist
+- Legacy JSON JWT endpoints (`/api/auth/token/`, `/api/auth/token/refresh/`) и Bearer JWT auth выключены по умолчанию
+- WebSocket-аутентификация по cookie; передача access-token через query string выключена по умолчанию
+- Throttling на login (10/мин), register (5/час), payment (10/час), support (30/час), chat_message (120/мин)
 - Origin-проверка для небезопасных API-запросов (`POST/PATCH/PUT/DELETE`)
 - CSP и security headers в nginx (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`)
+- Ограничения загрузок изображений: размер файла, количество изображений и разрешенные content-type
 - Race condition в оплате — защита через `select_for_update + F()`
 - Проверки владения коллекциями/предметами: нельзя добавить предмет в чужую коллекцию или открыть сделку по чужому `item_id`
 - Идемпотентность ЮKassa-webhook (partial unique constraint в БД)
 - Проверка владельца `payment_id` ЮKassa по metadata `user_id`; причины отмены `cancellation_details` возвращаются на фронт и логируются в webhook
 - IP whitelist для ЮKassa-webhook (CIDR подсети) + доверенный `X-Real-IP` от nginx
 - Демо-пополнение баланса отключено по умолчанию (`ENABLE_DEMO_DEPOSIT=False`)
-- CORS_ALLOW_CREDENTIALS, SameSite cookie и CSRF/Origin protection
+- CORS_ALLOW_CREDENTIALS, SameSite cookie, `X-CSRFToken` на небезопасных frontend-запросах и Origin protection
 - Sentry-мониторинг ошибок (опционально)
 - Media-ссылки отдаются через frontend/nginx на том же origin (`/media/...`)
 
@@ -306,10 +359,24 @@ DJANGO_ALLOWED_HOSTS=your-domain.ru,www.your-domain.ru
 CORS_ALLOWED_ORIGINS=https://your-domain.ru,https://www.your-domain.ru
 FRONTEND_URL=https://your-domain.ru
 JWT_COOKIE_SECURE=True
+CSRF_COOKIE_HTTPONLY=False
+ENABLE_LEGACY_JWT_ENDPOINTS=False
+ENABLE_BEARER_JWT_AUTH=False
+ALLOW_WEBSOCKET_QUERY_TOKEN=False
+DATA_UPLOAD_MAX_MEMORY_SIZE=12582912
+FILE_UPLOAD_MAX_MEMORY_SIZE=5242880
+USER_IMAGE_MAX_BYTES=8388608
+USER_IMAGE_MAX_COUNT=12
 DJANGO_SECURE_SSL_REDIRECT=True
 ENABLE_DEMO_DEPOSIT=False
 EMAIL_TIMEOUT=10
 EMAIL_NOTIFICATIONS_ENABLED=True
+```
+
+После включения blacklist для refresh-токенов примените миграции:
+
+```powershell
+docker compose --env-file .env.docker exec backend python manage.py migrate
 ```
 
 ---

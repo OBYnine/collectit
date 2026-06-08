@@ -7,20 +7,26 @@ export function UserProvider({ children }) {
   const [user, setUser] = useState(null);
 
   const refreshUser = useCallback(async () => {
-    if (!isAuthenticated()) return;
+    if (!isAuthenticated()) {
+      setUser(null);
+      return null;
+    }
+
     try {
       const data = await getMe();
-      // getMe() возвращает либо объект профиля, либо ошибку. Если бэкенд вернул
-      // что-то странное (например, {detail: '...'}) — не подменяем user.
-      if (data && data.id) setUser(data);
+      if (data && data.id) {
+        setUser(data);
+        return data;
+      }
     } catch {}
+
+    return null;
   }, []);
 
   useEffect(() => {
     refreshUser();
   }, [refreshUser]);
 
-  // Обновляем баланс после оплаты из чата
   useEffect(() => {
     window.addEventListener('balance-updated', refreshUser);
     return () => window.removeEventListener('balance-updated', refreshUser);

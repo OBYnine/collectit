@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-collectit_db}
       POSTGRES_USER: ${DB_USER:-collectit_user}
@@ -17,6 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -30,6 +32,7 @@ services:
 
   backend:
     image: collectit-backend:latest
+    restart: unless-stopped
     build:
       context: ./backend
     environment:
@@ -96,6 +99,7 @@ services:
 
   celery:
     image: collectit-backend:latest
+    restart: unless-stopped
     build:
       context: ./backend
     command: ["celery", "-A", "collectit", "worker", "-l", "info", "--pool=solo"]
@@ -153,6 +157,7 @@ services:
 
   celery-beat:
     image: collectit-backend:latest
+    restart: unless-stopped
     build:
       context: ./backend
     command: ["celery", "-A", "collectit", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
@@ -189,6 +194,7 @@ services:
 
   frontend:
     image: collectit-frontend:latest
+    restart: unless-stopped
     build:
       context: ./frontend
       args:

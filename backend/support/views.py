@@ -1,7 +1,8 @@
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 from django.contrib.auth import get_user_model
 from django.db.models import Case, IntegerField, Value, When
 from django.utils import timezone
@@ -14,6 +15,15 @@ from .models import SupportMessage, SupportTicket
 
 VALID_TOPICS = {t[0] for t in SupportTicket.TOPIC_CHOICES}
 VALID_STATUSES = {s[0] for s in SupportTicket.STATUS_CHOICES}
+
+
+class SupportWriteThrottle(UserRateThrottle):
+    scope = "support"
+
+    def allow_request(self, request, view):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        return super().allow_request(request, view)
 
 
 USER_STATUS_ORDER = Case(
@@ -105,6 +115,7 @@ def _broadcast_ticket_to_staff(ticket):
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
+@throttle_classes([SupportWriteThrottle])
 def ticket_list(request):
     if request.method == 'GET':
         tickets = (
@@ -141,6 +152,7 @@ def ticket_list(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@throttle_classes([SupportWriteThrottle])
 def ticket_message_create(request, pk):
     try:
         ticket = request.user.tickets.get(pk=pk)

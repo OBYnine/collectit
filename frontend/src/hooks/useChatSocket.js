@@ -3,7 +3,7 @@
  *
  * Бэкенд: chats/consumers.py + chats/routing.py
  *   ws(s)://host/ws/chats/<chatId>/
- * Auth: ?token=<access> (legacy localStorage) или cookie access_token.
+ * Auth: httpOnly cookie access_token.
  *
  * Возвращает:
  *   - socketReady: boolean (есть открытое соединение)
@@ -35,10 +35,7 @@ export function useChatSocket(chatId, onMessage) {
     closedRef.current = false;
 
     function connect() {
-      // Передаём legacy-токен в query (httpOnly cookie уйдёт автоматически).
-      const token = localStorage.getItem('access_token') || '';
-      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-      const url = `${WS_BASE}/ws/chats/${chatId}/${qs}`;
+      const url = `${WS_BASE}/ws/chats/${chatId}/`;
 
       const ws = new WebSocket(url);
       wsRef.current = ws;

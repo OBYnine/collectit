@@ -14,8 +14,8 @@ from django.conf import settings
 from django.db import transaction as db_transaction
 from django.db.models import F
 import requests as http_requests
-from .serializers import UserProfileSerializer, RegisterSerializer
-from .models import PendingRegistration, Transaction
+from .serializers import RegisterSerializer, UserProfileSerializer, WithdrawalRequestSerializer
+from .models import PendingRegistration, Transaction, WithdrawalRequest
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -172,6 +172,7 @@ def _send_verification_email(pending_registration):
 class RegisterView(generics.CreateAPIView):
     """POST /api/accounts/register/ — создаёт заявку и отправляет письмо подтверждения."""
     serializer_class = RegisterSerializer
+    authentication_classes = []
     permission_classes = [permissions.AllowAny]
     throttle_classes = [RegisterThrottle]
 
@@ -253,12 +254,14 @@ def verify_email(request, token):
 def me(request):
     """GET/PATCH /api/accounts/me/ — current user profile."""
     if request.method == "GET":
+        request.user.sync_onboarding_progress()
         serializer = UserProfileSerializer(request.user)
         return Response(serializer.data)
 
     serializer = UserProfileSerializer(request.user, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
-    serializer.save()
+    user = serializer.save()
+    user.sync_onboarding_progress()
     return Response(serializer.data)
 
 
@@ -603,6 +606,70 @@ def transaction_list(request):
     return Response(list(txs))
 
 
+@api_view(["GET", "POST"])
+@permission_classes([permissions.IsAuthenticated])
+@throttle_classes([PaymentThrottle])
+def withdrawal_requests(request):
+    """GET/POST /api/accounts/withdrawals/ — ручные заявки на вывод средств."""
+    if request.method == "GET":
+        queryset = WithdrawalRequest.objects.filter(user=request.user)
+        return Response(WithdrawalRequestSerializer(queryset, many=True).data)
+
+    serializer = WithdrawalRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    amount = data["amount"]
+    method = data["method"]
+
+    with db_transaction.atomic():
+        locked_user = User.objects.select_for_update().get(pk=request.user.pk)
+        if WithdrawalRequest.objects.filter(
+            user=locked_user,
+            status__in=WithdrawalRequest.ACTIVE_STATUSES,
+        ).exists():
+            return Response(
+                {"detail": "У вас уже есть заявка на вывод в обработке."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        affected = User.objects.filter(pk=locked_user.pk, balance__gte=amount).update(
+            balance=F("balance") - amount
+        )
+        if not affected:
+            return Response(
+                {"detail": "Недостаточно средств для вывода."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        method_label = dict(WithdrawalRequest.METHOD_CHOICES).get(method, method)
+        reserve_tx = Transaction.objects.create(
+            user=locked_user,
+            kind=Transaction.EXPENSE,
+            amount=amount,
+            description=f"Резерв вывода средств ({method_label})",
+        )
+        withdrawal = WithdrawalRequest.objects.create(
+            user=locked_user,
+            amount=amount,
+            method=method,
+            full_name=data["full_name"],
+            phone=data.get("phone", ""),
+            bank_name=data.get("bank_name", ""),
+            card_number=data.get("card_number", ""),
+            card_holder=data.get("card_holder", ""),
+            reserved_transaction=reserve_tx,
+        )
+        locked_user.refresh_from_db(fields=["balance"])
+
+    return Response(
+        {
+            "withdrawal": WithdrawalRequestSerializer(withdrawal).data,
+            "balance": str(locked_user.balance),
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 @throttle_classes([PaymentThrottle])
@@ -689,8 +756,8 @@ def _set_jwt_cookies(response, access, refresh):
         "domain": settings.JWT_COOKIE_DOMAIN,
         "path": "/",
     }
-    # Совпадает с SIMPLE_JWT lifetimes (1ч / 7д). Для access ставим max_age = 1ч,
-    # для refresh = 7д. SameSite=Lax + httpOnly закроют XSS+CSRF в браузере.
+    # Совпадает с SIMPLE_JWT lifetimes. SameSite=Lax + httpOnly уменьшают
+    # риск XSS/CSRF, а Secure на prod не даёт отправлять cookie по HTTP.
     access_lifetime = settings.SIMPLE_JWT.get("ACCESS_TOKEN_LIFETIME", _td(hours=1))
     refresh_lifetime = settings.SIMPLE_JWT.get("REFRESH_TOKEN_LIFETIME", _td(days=7))
 
@@ -731,6 +798,7 @@ def cookie_login(request):
         return Response({"detail": "Неверный email или пароль."},
                         status=status.HTTP_401_UNAUTHORIZED)
 
+    user.sync_onboarding_progress()
     refresh = RefreshToken.for_user(user)
     serializer = UserProfileSerializer(user, context={"request": request})
     response = Response({"user": serializer.data})
@@ -744,10 +812,13 @@ def cookie_login(request):
 def cookie_refresh(request):
     """POST /api/accounts/cookie-refresh/ — обновляет access по refresh cookie.
 
-    Тело пустое; refresh-токен берётся из httpOnly cookie.
+    Тело пустое; refresh-токен берётся из httpOnly cookie. При включенной
+    ротации SimpleJWT старый refresh попадает в blacklist, а клиент получает
+    новый refresh-cookie.
     """
     from rest_framework_simplejwt.tokens import RefreshToken
     from rest_framework_simplejwt.exceptions import TokenError
+    from rest_framework_simplejwt.settings import api_settings
 
     raw_refresh = request.COOKIES.get(settings.JWT_REFRESH_COOKIE_NAME)
     if not raw_refresh:
@@ -757,8 +828,23 @@ def cookie_refresh(request):
     except TokenError:
         return Response({"detail": "invalid refresh"}, status=status.HTTP_401_UNAUTHORIZED)
 
+    access_token = str(refresh.access_token)
+    new_refresh = None
+    if api_settings.ROTATE_REFRESH_TOKENS:
+        if api_settings.BLACKLIST_AFTER_ROTATION:
+            try:
+                refresh.blacklist()
+            except AttributeError:
+                logger.warning("Refresh token blacklist app is not installed.")
+            except TokenError:
+                return Response({"detail": "invalid refresh"}, status=status.HTTP_401_UNAUTHORIZED)
+        refresh.set_jti()
+        refresh.set_exp()
+        refresh.set_iat()
+        new_refresh = str(refresh)
+
     response = Response({"ok": True})
-    _set_jwt_cookies(response, str(refresh.access_token), None)
+    _set_jwt_cookies(response, access_token, new_refresh)
     return response
 
 
@@ -767,6 +853,16 @@ def cookie_refresh(request):
 @permission_classes([permissions.AllowAny])
 def cookie_logout(request):
     """POST /api/accounts/cookie-logout/ — стирает JWT cookies."""
+    from rest_framework_simplejwt.exceptions import TokenError
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    raw_refresh = request.COOKIES.get(settings.JWT_REFRESH_COOKIE_NAME)
+    if raw_refresh:
+        try:
+            RefreshToken(raw_refresh).blacklist()
+        except (AttributeError, TokenError):
+            pass
+
     response = Response({"ok": True})
     response.delete_cookie(settings.JWT_COOKIE_NAME, path="/", domain=settings.JWT_COOKIE_DOMAIN)
     response.delete_cookie(settings.JWT_REFRESH_COOKIE_NAME, path="/", domain=settings.JWT_COOKIE_DOMAIN)

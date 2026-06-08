@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getMyCollections, createCollection, updateCollection, deleteCollection, getCollection, createItem, updateItem, deleteItem, getWishlist, toggleWishlist, getDeals, getMessages, hideChat } from '../api/client';
 import { useUser } from '../context/UserContext';
 import { mediaUrl } from '../utils/config';
@@ -574,7 +574,7 @@ function EditItemModal({ item, onClose, onUpdated, onDeleted }) {
   );
 }
 
-function EditCollectionModal({ collection, onClose, onUpdated, onDeleted }) {
+function EditCollectionModal({ collection, onClose, onUpdated, onDeleted, startWithAddItem = false, onItemsChanged }) {
   const [name, setName] = useState(collection.name);
   const [description, setDescription] = useState(collection.description || '');
   const [color, setColor] = useState(collection.color || '#e8a635');
@@ -584,8 +584,12 @@ function EditCollectionModal({ collection, onClose, onUpdated, onDeleted }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [items, setItems] = useState([]);
   const [itemsLoading, setItemsLoading] = useState(true);
-  const [showAddItem, setShowAddItem] = useState(false);
+  const [showAddItem, setShowAddItem] = useState(startWithAddItem);
   const [editingItem, setEditingItem] = useState(null);
+
+  useEffect(() => {
+    if (startWithAddItem) setShowAddItem(true);
+  }, [startWithAddItem]);
 
   useEffect(() => {
     getCollection(collection.id).then(data => {
@@ -815,7 +819,10 @@ function EditCollectionModal({ collection, onClose, onUpdated, onDeleted }) {
         <AddItemModal
           collectionId={collection.id}
           onClose={() => setShowAddItem(false)}
-          onAdded={item => setItems(prev => [...prev, item])}
+          onAdded={item => {
+            setItems(prev => [...prev, item]);
+            onItemsChanged?.();
+          }}
         />
       )}
       {editingItem && (
@@ -823,7 +830,10 @@ function EditCollectionModal({ collection, onClose, onUpdated, onDeleted }) {
           item={editingItem}
           onClose={() => setEditingItem(null)}
           onUpdated={updated => setItems(prev => prev.map(i => i.id === updated.id ? updated : i))}
-          onDeleted={id => setItems(prev => prev.filter(i => i.id !== id))}
+          onDeleted={id => {
+            setItems(prev => prev.filter(i => i.id !== id));
+            onItemsChanged?.();
+          }}
         />
       )}
     </div>
@@ -1281,13 +1291,17 @@ function DealsTab() {
 }
 
 export default function ProfilePage() {
-  const { user } = useUser();
+  const { user, refreshUser } = useUser();
+  const [searchParams] = useSearchParams();
+  const quest = searchParams.get('quest');
   const [collections, setCollections] = useState([]);
   const [wishlistItems, setWishlistItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingCollection, setEditingCollection] = useState(null);
+  const [autoAddItem, setAutoAddItem] = useState(false);
+  const handledQuestRef = useRef('');
 
   useEffect(() => {
     async function load() {
@@ -1306,6 +1320,11 @@ export default function ProfilePage() {
 
   function handleCreated(newCollection) {
     setCollections(prev => [newCollection, ...prev]);
+    refreshUser();
+    if (quest === 'item') {
+      setEditingCollection(newCollection);
+      setAutoAddItem(true);
+    }
   }
 
   function handleUpdated(updated) {
@@ -1314,7 +1333,28 @@ export default function ProfilePage() {
 
   function handleDeleted(id) {
     setCollections(prev => prev.filter(c => c.id !== id));
+    refreshUser();
   }
+
+  useEffect(() => {
+    if (loading || !quest || handledQuestRef.current === quest) return;
+    handledQuestRef.current = quest;
+
+    if (quest === 'collection') {
+      setShowModal(true);
+      return;
+    }
+
+    if (quest === 'item') {
+      const firstCollection = collections[0];
+      if (firstCollection) {
+        setEditingCollection(firstCollection);
+        setAutoAddItem(true);
+      } else {
+        setShowModal(true);
+      }
+    }
+  }, [collections, loading, quest]);
 
   if (loading || !user) {
     return (
@@ -1341,8 +1381,14 @@ export default function ProfilePage() {
       <CollectionsCanvas
         collections={collections}
         wishlistItems={wishlistItems}
-        onNewCollection={() => setShowModal(true)}
-        onEditCollection={setEditingCollection}
+        onNewCollection={() => {
+          setAutoAddItem(false);
+          setShowModal(true);
+        }}
+        onEditCollection={collection => {
+          setAutoAddItem(false);
+          setEditingCollection(collection);
+        }}
         onWishlistItemUnliked={id => setWishlistItems(prev => prev.filter(i => i.id !== id))}
       />
       {showModal && (
@@ -1354,9 +1400,14 @@ export default function ProfilePage() {
       {editingCollection && (
         <EditCollectionModal
           collection={editingCollection}
-          onClose={() => setEditingCollection(null)}
+          startWithAddItem={autoAddItem}
+          onClose={() => {
+            setEditingCollection(null);
+            setAutoAddItem(false);
+          }}
           onUpdated={handleUpdated}
           onDeleted={handleDeleted}
+          onItemsChanged={refreshUser}
         />
       )}
     </>

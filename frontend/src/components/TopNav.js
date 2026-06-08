@@ -937,6 +937,12 @@ export default function TopNav() {
                   Настройки
                 </button>
                 <button
+                  onClick={() => { setMenuOpen(false); navigate('/onboarding'); }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-[#8892a4] hover:text-[#e8eaf0] transition-colors duration-150"
+                >
+                  Обучение
+                </button>
+                <button
                   onClick={() => { setMenuOpen(false); navigate('/support'); }}
                   className="w-full text-left px-4 py-2.5 text-sm text-[#8892a4] hover:text-[#e8eaf0] transition-colors duration-150"
                 >

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -185,6 +186,8 @@ function DeliverySection({ user, onSaved }) {
 
 export default function SettingsPage() {
   const { refreshUser } = useUser();
+  const [searchParams] = useSearchParams();
+  const quest = searchParams.get('quest');
   const [user, setUser]             = useState(null);
   const [profileMsg, setProfileMsg] = useState(null);
   const [passMsg, setPassMsg]       = useState(null);
@@ -196,6 +199,9 @@ export default function SettingsPage() {
   const [bio, setBio]           = useState('');
   const [phone, setPhone]       = useState('');
   const [avatarFile, setAvatarFile] = useState(null);
+  const profileFormRef = useRef(null);
+  const phoneInputRef = useRef(null);
+  const deliveryRef = useRef(null);
 
   const [oldPass, setOldPass]         = useState('');
   const [newPass, setNewPass]         = useState('');
@@ -210,6 +216,17 @@ export default function SettingsPage() {
       setPhone(u.phone || '');
     });
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    if (quest === 'phone') {
+      profileFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => phoneInputRef.current?.focus(), 250);
+    }
+    if (quest === 'delivery') {
+      deliveryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [quest, user]);
 
   function handleAvatarChange(e) {
     const file = e.target.files[0];
@@ -271,7 +288,13 @@ export default function SettingsPage() {
       <h1 className="text-[#e8eaf0] text-xl font-semibold mb-8">Настройки</h1>
 
       {/* Профиль */}
-      <form onSubmit={handleProfileSave} className="bg-[#151c2c] rounded-2xl p-6 mb-6">
+      <form
+        ref={profileFormRef}
+        onSubmit={handleProfileSave}
+        className={`bg-[#151c2c] rounded-2xl p-6 mb-6 transition-shadow ${
+          quest === 'phone' ? 'shadow-[0_0_0_2px_rgba(232,166,53,0.28),0_0_40px_rgba(232,166,53,0.08)]' : ''
+        }`}
+      >
         <p className="text-[#8892a4] text-xs font-medium uppercase tracking-wider mb-5">Профиль</p>
 
         <div className="flex items-center gap-5 mb-6">
@@ -312,9 +335,11 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="text-[#8892a4] text-xs mb-1.5 block">Номер телефона</label>
-            <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
+            <input ref={phoneInputRef} type="tel" value={phone} onChange={e => setPhone(e.target.value)}
               placeholder="+7 900 000 00 00"
-              className="w-full bg-[#0a0e17] text-[#e8eaf0] text-sm px-4 py-2.5 rounded-lg border border-white/[.08] outline-none focus:border-[#e8a635]/50 transition-colors" />
+              className={`w-full bg-[#0a0e17] text-[#e8eaf0] text-sm px-4 py-2.5 rounded-lg border outline-none focus:border-[#e8a635]/50 transition-colors ${
+                quest === 'phone' ? 'border-[#e8a635]/50' : 'border-white/[.08]'
+              }`} />
             <p className="text-[#4a5568] text-[11px] mt-1">Используется для оформления доставки СДЭК</p>
           </div>
         </div>
@@ -332,10 +357,17 @@ export default function SettingsPage() {
 
       {/* Доставка СДЭК */}
       {user && (
-        <DeliverySection
-          user={user}
-          onSaved={async () => { const u = await getMe(); setUser(u); }}
-        />
+        <div
+          ref={deliveryRef}
+          className={`transition-shadow rounded-2xl ${
+            quest === 'delivery' ? 'shadow-[0_0_0_2px_rgba(232,166,53,0.28),0_0_40px_rgba(232,166,53,0.08)]' : ''
+          }`}
+        >
+          <DeliverySection
+            user={user}
+            onSaved={async () => { const u = await getMe(); setUser(u); await refreshUser(); }}
+          />
+        </div>
       )}
 
       {/* Пароль */}

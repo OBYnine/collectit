@@ -9,6 +9,7 @@ urlpatterns = [
     path("users/<str:username>/", views.user_profile, name="user-profile"),
     path("cdek-points/", views.cdek_points, name="cdek-points"),
     path("transactions/", views.transaction_list, name="transactions"),
+    path("withdrawals/", views.withdrawal_requests, name="withdrawals"),
     path("deposit/", views.deposit, name="deposit"),
     path("create-payment/", views.create_payment, name="create-payment"),
     path("verify-payment/", views.verify_payment, name="verify-payment"),

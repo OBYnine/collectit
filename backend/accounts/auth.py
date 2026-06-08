@@ -12,10 +12,10 @@ class CookieJWTAuthentication(JWTAuthentication):
     """Читает access-токен из cookie вместо Authorization-заголовка."""
 
     def authenticate(self, request):
-        # Header-based auth по-прежнему работает (для обратной совместимости и тестов).
-        header_result = super().authenticate(request)
-        if header_result is not None:
-            return header_result
+        if settings.ENABLE_BEARER_JWT_AUTH:
+            header_result = super().authenticate(request)
+            if header_result is not None:
+                return header_result
 
         raw_token = request.COOKIES.get(settings.JWT_COOKIE_NAME)
         if not raw_token:

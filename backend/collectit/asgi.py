@@ -1,8 +1,8 @@
 """ASGI-точка входа для Channels.
 
 HTTP по-прежнему отдаёт обычный Django, WebSocket уходит в URLRouter
-с consumer'ами чата. Аутентификация WS — через JWT-токен в query string
-(`?token=...`) или из httpOnly cookie (для одного домена).
+с consumer'ами чата. Аутентификация WS — через httpOnly cookie.
+Legacy query-token доступен только при ALLOW_WEBSOCKET_QUERY_TOKEN=True.
 """
 import os
 import django
