@@ -4,10 +4,12 @@ from django.contrib.auth.hashers import make_password
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
+import ipaddress
 from collectit.upload_validation import validate_uploaded_image
 from .models import PendingRegistration, WithdrawalRequest
 
 User = get_user_model()
+LEGAL_DOCUMENT_VERSION = "2026-06-08"
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -145,6 +147,8 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
+    terms_accepted = serializers.BooleanField(write_only=True)
+    personal_data_accepted = serializers.BooleanField(write_only=True)
 
     def validate(self, data):
         data["email"] = data["email"].strip().lower()
@@ -152,6 +156,10 @@ class RegisterSerializer(serializers.Serializer):
 
         if data["password"] != data["password_confirm"]:
             raise serializers.ValidationError({"password_confirm": "Пароли не совпадают."})
+        if data.get("terms_accepted") is not True:
+            raise serializers.ValidationError({"terms_accepted": "Необходимо принять пользовательское соглашение."})
+        if data.get("personal_data_accepted") is not True:
+            raise serializers.ValidationError({"personal_data_accepted": "Необходимо дать согласие на обработку персональных данных."})
         if User.objects.filter(email__iexact=data["email"]).exists():
             raise serializers.ValidationError({"email": "Пользователь с таким email уже существует."})
         if User.objects.filter(username__iexact=data["username"]).exists():
@@ -169,9 +177,27 @@ class RegisterSerializer(serializers.Serializer):
         expires_at = timezone.now() + timedelta(
             hours=getattr(settings, "EMAIL_VERIFICATION_EXPIRE_HOURS", 24)
         )
+        request = self.context.get("request")
+        consent_ip = None
+        consent_user_agent = ""
+        if request is not None:
+            forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+            consent_ip = (forwarded_for.split(",")[0].strip() or None) if forwarded_for else request.META.get("REMOTE_ADDR")
+            try:
+                consent_ip = str(ipaddress.ip_address(consent_ip)) if consent_ip else None
+            except ValueError:
+                consent_ip = None
+            consent_user_agent = request.META.get("HTTP_USER_AGENT", "")[:512]
+        accepted_at = timezone.now()
         return PendingRegistration.objects.create(
             username=validated_data["username"],
             email=validated_data["email"],
             password_hash=make_password(validated_data["password"]),
             expires_at=expires_at,
+            terms_accepted_at=accepted_at,
+            terms_version=LEGAL_DOCUMENT_VERSION,
+            personal_data_accepted_at=accepted_at,
+            personal_data_version=LEGAL_DOCUMENT_VERSION,
+            consent_ip=consent_ip,
+            consent_user_agent=consent_user_agent,
         )

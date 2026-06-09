@@ -8,6 +8,14 @@ from .models import PendingRegistration, Transaction, User, WithdrawalRequest
 class UserAdmin(BaseUserAdmin):
     list_display = ["username", "email", "is_news_editor", "total_items", "total_collections"]
     list_filter = ["is_news_editor", "is_staff"]
+    readonly_fields = BaseUserAdmin.readonly_fields + (
+        "terms_accepted_at",
+        "terms_version",
+        "personal_data_accepted_at",
+        "personal_data_version",
+        "consent_ip",
+        "consent_user_agent",
+    )
 
     fieldsets = (
         (None, {"fields": ("username", "password")}),
@@ -19,14 +27,35 @@ class UserAdmin(BaseUserAdmin):
         ("Статистика", {"fields": ("total_items", "total_collections", "total_trades", "rating", "profile_views")}),
         ("Доставка", {"fields": ("delivery_city", "delivery_point_code", "delivery_point_address")}),
         ("Обучение", {"fields": ("onboarding_completed_steps", "onboarding_completed_at")}),
+        ("Согласия", {"fields": (
+            "terms_accepted_at",
+            "terms_version",
+            "personal_data_accepted_at",
+            "personal_data_version",
+            "consent_ip",
+            "consent_user_agent",
+        )}),
     )
 
 
 @admin.register(PendingRegistration)
 class PendingRegistrationAdmin(admin.ModelAdmin):
-    list_display = ["email", "username", "created_at", "expires_at"]
+    list_display = ["email", "username", "terms_accepted_at", "personal_data_accepted_at", "created_at", "expires_at"]
     search_fields = ["email", "username"]
-    readonly_fields = ["username", "email", "password_hash", "token", "created_at", "expires_at"]
+    readonly_fields = [
+        "username",
+        "email",
+        "password_hash",
+        "token",
+        "terms_accepted_at",
+        "terms_version",
+        "personal_data_accepted_at",
+        "personal_data_version",
+        "consent_ip",
+        "consent_user_agent",
+        "created_at",
+        "expires_at",
+    ]
 
 
 @admin.register(Transaction)

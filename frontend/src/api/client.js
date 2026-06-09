@@ -122,7 +122,7 @@ export async function login(email, password) {
   return data;
 }
 
-export async function register(username, email, password, passwordConfirm) {
+export async function register(username, email, password, passwordConfirm, consents = {}) {
   const res = await fetch(`${API_BASE}/accounts/register/`, {
     method: "POST",
     headers: addCsrfHeader({ "Content-Type": "application/json" }, "POST"),
@@ -132,6 +132,8 @@ export async function register(username, email, password, passwordConfirm) {
       email,
       password,
       password_confirm: passwordConfirm,
+      terms_accepted: Boolean(consents.termsAccepted),
+      personal_data_accepted: Boolean(consents.personalDataAccepted),
     }),
   });
   if (!res.ok) {

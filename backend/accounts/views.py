@@ -239,6 +239,12 @@ def verify_email(request, token):
             username=pending_registration.username,
             email=pending_registration.email,
             password=pending_registration.password_hash,
+            terms_accepted_at=pending_registration.terms_accepted_at,
+            terms_version=pending_registration.terms_version,
+            personal_data_accepted_at=pending_registration.personal_data_accepted_at,
+            personal_data_version=pending_registration.personal_data_version,
+            consent_ip=pending_registration.consent_ip,
+            consent_user_agent=pending_registration.consent_user_agent,
         )
         pending_registration.delete()
 

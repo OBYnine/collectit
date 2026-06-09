@@ -39,6 +39,14 @@ class User(AbstractUser):
     onboarding_completed_steps = models.JSONField(default=list, blank=True)
     onboarding_completed_at = models.DateTimeField(null=True, blank=True)
 
+    # Legal consents
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    terms_version = models.CharField(max_length=32, blank=True)
+    personal_data_accepted_at = models.DateTimeField(null=True, blank=True)
+    personal_data_version = models.CharField(max_length=32, blank=True)
+    consent_ip = models.GenericIPAddressField(null=True, blank=True)
+    consent_user_agent = models.CharField(max_length=512, blank=True)
+
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
 
@@ -274,6 +282,12 @@ class PendingRegistration(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    terms_version = models.CharField(max_length=32, blank=True)
+    personal_data_accepted_at = models.DateTimeField(null=True, blank=True)
+    personal_data_version = models.CharField(max_length=32, blank=True)
+    consent_ip = models.GenericIPAddressField(null=True, blank=True)
+    consent_user_agent = models.CharField(max_length=512, blank=True)
 
     class Meta:
         db_table = "pending_registrations"

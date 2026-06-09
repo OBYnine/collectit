@@ -1,14 +1,73 @@
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from collectibles.models import Collection, Item
-from .models import Transaction, WithdrawalRequest
+from .models import PendingRegistration, Transaction, WithdrawalRequest
 
 
 User = get_user_model()
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    FRONTEND_URL="http://testserver",
+)
+class RegisterConsentTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_register_requires_legal_consents(self):
+        response = self.client.post("/api/accounts/register/", {
+            "username": "collector",
+            "email": "collector@example.com",
+            "password": "password123",
+            "password_confirm": "password123",
+        }, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertIn("terms_accepted", payload)
+        self.assertIn("personal_data_accepted", payload)
+        self.assertEqual(PendingRegistration.objects.count(), 0)
+
+    def test_register_stores_consents_and_transfers_them_to_user(self):
+        response = self.client.post(
+            "/api/accounts/register/",
+            {
+                "username": "collector",
+                "email": "collector@example.com",
+                "password": "password123",
+                "password_confirm": "password123",
+                "terms_accepted": True,
+                "personal_data_accepted": True,
+            },
+            format="json",
+            REMOTE_ADDR="203.0.113.9",
+            HTTP_USER_AGENT="CollectIT tests",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        pending = PendingRegistration.objects.get(email="collector@example.com")
+        self.assertIsNotNone(pending.terms_accepted_at)
+        self.assertIsNotNone(pending.personal_data_accepted_at)
+        self.assertEqual(pending.terms_version, "2026-06-08")
+        self.assertEqual(pending.personal_data_version, "2026-06-08")
+        self.assertEqual(pending.consent_ip, "203.0.113.9")
+        self.assertEqual(pending.consent_user_agent, "CollectIT tests")
+
+        verify_response = self.client.get(f"/api/accounts/verify-email/{pending.token}/")
+
+        self.assertEqual(verify_response.status_code, 201)
+        user = User.objects.get(email="collector@example.com")
+        self.assertIsNotNone(user.terms_accepted_at)
+        self.assertIsNotNone(user.personal_data_accepted_at)
+        self.assertEqual(user.terms_version, pending.terms_version)
+        self.assertEqual(user.personal_data_version, pending.personal_data_version)
+        self.assertEqual(user.consent_ip, "203.0.113.9")
+        self.assertEqual(user.consent_user_agent, "CollectIT tests")
 
 
 class WithdrawalRequestTests(TestCase):
